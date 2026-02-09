@@ -1,0 +1,144 @@
+/* ===============================
+   GLOBAL
+================================ */
+* {
+    font-family: 'Open Sans', sans-serif;
+}
+
+body {
+    background: linear-gradient(135deg, #000000, #111827);
+    min-height: 100vh;
+    color: #ffffff;
+}
+
+
+.navbar {
+    background: rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+    border-bottom: 1px solid rgba(255,255,255,0.15);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+}
+
+.navbar .nav-link {
+    color: rgba(255,255,255,0.85);
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.navbar .nav-link:hover {
+    color: #ff0202;
+}
+
+.frosted-card {
+    background: rgba(255,255,255,0.08);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+    border-radius: 18px;
+    padding: 26px;
+    margin-bottom: 30px;
+    border: 1px solid rgba(255,255,255,0.18);
+    box-shadow:
+        0 10px 35px rgba(0,0,0,0.35),
+        inset 0 0 0 1px rgba(255,255,255,0.06);
+    transition: all 0.35s ease;
+}
+
+.frosted-card:hover {
+    transform: translateY(-6px) scale(1.01);
+    box-shadow:
+        0 20px 50px rgba(0,0,0,0.6),
+        inset 0 0 0 1px rgba(255,255,255,0.1);
+}
+
+/* ===============================
+   BUTTONS
+================================ */
+.btn {
+    border-radius: 14px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+}
+
+/* ===============================
+   FORMS
+================================ */
+.form-control {
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.25);
+    color: white;
+    border-radius: 12px;
+}
+
+.form-control:focus {
+    background: rgba(255,255,255,0.18);
+    color: white;
+    border-color: #00f2fe;
+    box-shadow: none;
+}
+
+/* ===============================
+   ANIMATIONS
+================================ */
+.fade-in {
+    animation: fadeIn 0.3s ease forwards;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+}
+.spinner-border .visually-hidden {
+    color: #ffffff;
+}
+/* FORM INPUT FIX */
+.form-control {
+    background: rgba(255, 255, 255, 0.85) !important;
+    color: #000 !important;
+    border: 1px solid rgba(0,0,0,0.15);
+}
+
+.form-control::placeholder {
+    color: #555 !important;
+}
+.form-control:focus {
+    background: rgba(255, 255, 255, 0.95) !important;
+    color: #000 !important;
+    border-color: #00f2fe;
+    box-shadow: none;
+}
+.accordion-item {
+    background: rgba(255,255,255,0.15);
+    backdrop-filter: blur(15px);
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.25);
+}
+
+.accordion-button {
+    background: transparent;
+    color: #fff;
+    font-weight: 600;
+}
+
+.accordion-button:not(.collapsed) {
+    background: rgba(0,0,0,0.2);
+    color: #fff;
+}
+.accordion-body {
+    color: #ddd;
+}

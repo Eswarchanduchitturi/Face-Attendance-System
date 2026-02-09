@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h3 class="mb-4">Admin Dashboard</h3>
+
+<div class="row g-4">
+
+    <!-- TOTAL USERS -->
+    <div class="col-md-4">
+        <div class="frosted-card text-center">
+            <h6>Total Users</h6>
+            <h2>{{ total_users }}</h2>
+        </div>
+    </div>
+
+    <!-- TOTAL ATTENDANCE -->
+    <div class="col-md-4">
+        <div class="frosted-card text-center">
+            <h6>Total Attendance Records</h6>
+            <h2>{{ total_attendance }}</h2>
+        </div>
+    </div>
+
+    <!-- THRESHOLD -->
+    <div class="col-md-4">
+        <div class="frosted-card text-center">
+            <h6>Recognition Threshold</h6>
+            <h2>{{ threshold }}</h2>
+        </div>
+    </div>
+
+</div>
+
+<hr class="my-4">
+
+<!-- ADMIN ACTIONS -->
+<div class="row g-3">
+
+    <div class="col-md-4">
+        <a href="/admin/download_report" class="btn btn-success w-100">
+            <i class="fa-solid fa-file-pdf"></i> Download Full Report
+        </a>
+    </div>
+
+    <div class="col-md-4">
+        <a href="/admin/complaints" class="btn btn-warning w-100">
+            <i class="fa-solid fa-bug"></i> Manage Complaints
+        </a>
+    </div>
+
+    <div class="col-md-4">
+        <a href="/admin/feedback" class="btn btn-info w-100">
+            <i class="fa-solid fa-star"></i> View Feedback
+        </a>
+    </div>
+
+</div>
+
+
+
+<script>
+setInterval(()=>{
+    fetch("/admin/model_accuracy")
+    .then(r=>r.json())
+    .then(d=>{
+        document.getElementById("accuracy").innerText = d.accuracy + "%";
+        document.getElementById("accDetail").innerText =
+            `Success: ${d.success} | Failed: ${d.failure}`;
+    });
+}, 2000);
+</script>
+
+
+<script>
+fetch("/stats/daily")
+.then(r => r.json())
+.then(data => {
+    const labels = data.map(d => d[0]);
+    const values = data.map(d => d[1]);
+
+    new Chart(document.getElementById("attendanceChart"), {
+        type: "line",
+        data: {
+            labels,
+            datasets: [{
+                label: "Attendance Trend",
+                data: values,
+                borderColor: "#00f2fe",
+                backgroundColor: "rgba(0,242,254,0.15)",
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            plugins: { legend: { labels: { color: "white" } } },
+            scales: {
+                x: { ticks: { color: "white" } },
+                y: { ticks: { color: "white" } }
+            }
+        }
+    });
+});
+</script>
+<div class="frosted-card mt-4">
+    <h6>Model Accuracy (Live)</h6>
+    <canvas id="accuracyChart" height="120"></canvas>
+</div>
+
+<script>
+const ctx = document.getElementById("accuracyChart");
+
+const accChart = new Chart(ctx, {
+    type: "line",
+    data: {
+        labels: [],
+        datasets: [{
+            label: "Accuracy %",
+            data: [],
+            borderColor: "#00ffcc",
+            tension: 0.4,
+            fill: false
+        }]
+    },
+    options: {
+        responsive: true,
+        scales: {
+            y: { min: 0, max: 100 }
+        }
+    }
+});
+
+setInterval(() => {
+    fetch("/admin/accuracy_data")
+        .then(r => r.json())
+        .then(d => {
+            const time = new Date().toLocaleTimeString();
+            accChart.data.labels.push(time);
+            accChart.data.datasets[0].data.push(d.values[0]);
+
+            if (accChart.data.labels.length > 10) {
+                accChart.data.labels.shift();
+                accChart.data.datasets[0].data.shift();
+            }
+            accChart.update();
+        });
+}, 3000);
+</script>
+<a href="/logout" class="btn btn-danger btn-sm float-end">
+    Logout
+</a>
+
+{% endblock %}

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h4>🚨 Raise a Complaint</h4>
+
+<form method="post" class="glass-card">
+
+    <label>Category</label>
+    <select name="category" class="form-control mb-2">
+        <option>Face Recognition Issue</option>
+        <option>Enrollment Problem</option>
+        <option>Attendance Error</option>
+        <option>System Bug</option>
+    </select>
+
+    <label>Description</label>
+    <textarea name="description" class="form-control mb-3" required></textarea>
+
+    <button class="btn btn-danger">Submit Complaint</button>
+</form>
+
+{% endblock %}

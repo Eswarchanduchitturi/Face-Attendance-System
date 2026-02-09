@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row justify-content-center mt-5">
+    <div class="col-md-6 col-lg-5">
+
+        <div class="frosted-card fade-in text-center">
+
+            <h4 class="mb-4">
+                <i class="fa-solid fa-user-plus"></i>
+                Face Enrollment
+            </h4>
+
+            <!-- STATUS BANNER -->
+            <div id="statusBanner" class="alert d-none"></div>
+
+            <!-- PROGRESS BAR -->
+            <div id="progressBox" class="d-none mt-3">
+                <div class="progress mb-2" style="height:20px;">
+                    <div id="progressBar"
+                         class="progress-bar progress-bar-striped progress-bar-animated bg-info"
+                         style="width:0%">0%</div>
+                </div>
+                <small id="progressText">Initializing...</small>
+            </div>
+
+            <!-- TEST PREVIEW RESULT -->
+            <div id="testResult" class="alert alert-info d-none mt-3"></div>
+
+            <!-- ENROLL FORM -->
+            <form id="enrollForm">
+                <input type="number" name="user_id" class="form-control mb-3"
+                       placeholder="User ID" required>
+
+                <input type="text" name="name" class="form-control mb-3"
+                       placeholder="Full Name" required>
+
+                <input type="email" name="email" class="form-control mb-3"
+                       placeholder="Email">
+
+                <input type="text" name="department" class="form-control mb-4"
+                       placeholder="Department">
+
+                <button class="btn btn-success w-100">
+                    Start Face Enrollment
+                </button>
+            </form>
+
+        </div>
+    </div>
+</div>
+
+<script>
+/* -------------------------------
+   STATUS BANNER
+-------------------------------- */
+function showBanner(msg, type){
+    const banner = document.getElementById("statusBanner");
+    banner.className = `alert alert-${type}`;
+    banner.innerText = msg;
+    banner.classList.remove("d-none");
+}
+
+/* -------------------------------
+   PROGRESS BAR
+-------------------------------- */
+async function updateProgress(p, text){
+    const bar = document.getElementById("progressBar");
+    bar.style.width = p + "%";
+    bar.innerText = p + "%";
+    document.getElementById("progressText").innerText = text;
+}
+
+/* -------------------------------
+   ENROLL FLOW
+-------------------------------- */
+document.getElementById("enrollForm").onsubmit = async (e) => {
+    e.preventDefault();
+
+    // Reset UI
+    document.getElementById("statusBanner").classList.add("d-none");
+    document.getElementById("testResult").classList.add("d-none");
+
+    const form = new FormData(e.target);
+    const userId = form.get("user_id");
+
+    // STEP 1: Save user details
+    await fetch("/enroll", { method:"POST", body: form });
+
+    // STEP 2: Start progress
+    document.getElementById("progressBox").classList.remove("d-none");
+    updateProgress(20, "Capturing face images...");
+
+    // STEP 3: Capture faces
+    const capture = await fetch(`/capture/${userId}`);
+    const captureResult = await capture.json();
+
+    if(captureResult.status !== "captured"){
+        showBanner("Face capture failed ❌", "danger");
+        return;
+    }
+
+    // STEP 4: Train model
+    updateProgress(60, "Training model...");
+    const train = await fetch("/train_test_progress");
+    const trainResult = await train.json();
+
+    if(trainResult.status !== "success"){
+        showBanner("Training failed ❌", "danger");
+        return;
+    }
+
+    // STEP 5: Testing complete
+    updateProgress(100, "Testing completed ✔");
+
+    // STEP 6: AUTOMATIC TEST RECOGNITION PREVIEW
+    const preview = await fetch("/test_preview");
+    const previewData = await preview.json();
+
+    const testBox = document.getElementById("testResult");
+    testBox.innerText = previewData.result;
+    testBox.classList.remove("d-none");
+
+    // FINAL SUCCESS
+    showBanner("Enrollment successful ✔ Model trained & verified", "success");
+};
+</script>
+
+{% endblock %}

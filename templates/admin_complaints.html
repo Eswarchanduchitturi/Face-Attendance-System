@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h4 class="mb-4">Manage Complaints</h4>
+
+<table class="table table-hover">
+    <thead>
+        <tr>
+            <th>Category</th>
+            <th>Description</th>
+            <th>Status</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+
+    <tbody>
+        {% for c in complaints %}
+        <tr>
+            <td>{{ c[1] }}</td>
+            <td>{{ c[2] }}</td>
+            <td>
+                <span class="badge bg-{{ 'success' if c[3]=='Closed' else 'warning' }}">
+                    {{ c[3] }}
+                </span>
+            </td>
+            <td>
+                {% if c[3] == 'Open' %}
+                <a href="/admin/complaint/close/{{ c[0] }}"
+                   class="btn btn-sm btn-danger">
+                    Close
+                </a>
+                {% else %}
+                ✔
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% endblock %}

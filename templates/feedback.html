@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h4>⭐ Rate Us & Feedback</h4>
+
+<form method="post" class="glass-card">
+    <label>Rating (1–5)</label>
+    <input type="number" name="rating" min="1" max="5" class="form-control mb-2" required>
+
+    <label>Message</label>
+    <textarea name="message" class="form-control mb-3" required></textarea>
+
+    <button class="btn btn-success">Submit Feedback</button>
+</form>
+
+{% endblock %}

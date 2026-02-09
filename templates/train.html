@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row justify-content-center">
+    <div class="col-md-6">
+
+        <div class="glass-card text-center">
+            <h3 class="mb-3">
+                <i class="fa-solid fa-brain"></i>
+                Model Training
+            </h3>
+
+            <div class="alert alert-success">
+                <strong>Training Completed Successfully!</strong>
+            </div>
+
+            <p>
+                The facial recognition model has been updated
+                using the newly enrolled face data.
+            </p>
+
+            <div class="mt-3">
+                <a href="/" class="btn btn-primary w-100 mb-2">
+                    Go to Live Recognition
+                </a>
+
+                <a href="/attendance" class="btn btn-secondary w-100">
+                    View Attendance
+                </a>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+{% endblock %}

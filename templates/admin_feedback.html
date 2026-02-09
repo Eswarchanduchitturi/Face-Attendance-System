@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h4 class="mb-4">User Feedback</h4>
+
+<table class="table table-bordered">
+    <thead>
+        <tr>
+            <th>Rating</th>
+            <th>Message</th>
+            <th>Date</th>
+        </tr>
+    </thead>
+
+    <tbody>
+        {% for f in feedback %}
+        <tr>
+            <td>{{ f[0] }}/5</td>
+            <td>{{ f[1] }}</td>
+            <td>{{ f[2] }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% endblock %}

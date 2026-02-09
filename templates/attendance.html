@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h3 class="mb-4 text-center">
+    <i class="fa-solid fa-clipboard-list"></i>
+    Attendance Dashboard
+</h3>
+
+<!-- SUMMARY CARDS -->
+<div class="row text-center mb-4">
+    <div class="col-md-4">
+        <div class="glass-card">
+            <h6>Present Today</h6>
+            <h2>{{ today_count }}</h2>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="glass-card">
+            <h6>Total Records</h6>
+            <h2>{{ total_count }}</h2>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="glass-card">
+            <h6>Attendance %</h6>
+            <h2>{{ percentage }}%</h2>
+        </div>
+    </div>
+</div>
+
+<!-- ACTION BAR -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0">Attendance History</h5>
+
+    <a href="/download/pdf" class="btn btn-success btn-sm">
+        <i class="fa-solid fa-download"></i> Download History
+    </a>
+</div>
+
+<!-- COLLAPSIBLE ATTENDANCE HISTORY -->
+<div class="accordion mb-4" id="attendanceAccordion">
+    <div class="accordion-item glass-card">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed bg-transparent text-white"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#attendanceCollapse">
+                View Attendance Records
+            </button>
+        </h2>
+
+        <div id="attendanceCollapse" class="accordion-collapse collapse">
+            <div class="accordion-body">
+
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover table-bordered">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Date</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for row in rows %}
+                            <tr>
+                                <td>{{ row[0] }}</td>
+                                <td>{{ row[1] }}</td>
+                                <td>{{ row[2] }}</td>
+                                <td>{{ row[3] }}</td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- CHARTS -->
+<div class="row mt-4 g-4">
+
+    <!-- DAILY ATTENDANCE -->
+    <div class="col-md-6">
+        <div class="glass-card">
+            <h5 class="text-center">📈 Daily Attendance Trend</h5>
+            <canvas id="dailyChart"></canvas>
+        </div>
+    </div>
+
+    <!-- PERFORMANCE -->
+    <div class="col-md-6">
+        <div class="glass-card">
+            <h5 class="text-center">🥧 Recognition Performance</h5>
+            <canvas id="perfChart"></canvas>
+        </div>
+    </div>
+
+</div>
+
+<!-- CHART SCRIPTS -->
+<script>
+fetch("/stats/daily").then(r=>r.json()).then(data=>{
+    new Chart(document.getElementById("dailyChart"),{
+        type:"line",
+        data:{
+            labels:data.map(d=>d[0]),
+            datasets:[{
+                label:"Attendance",
+                data:data.map(d=>d[1]),
+                borderWidth:2,
+                tension:0.4,
+                fill:false
+            }]
+        }
+    });
+});
+
+fetch("/stats/performance").then(r=>r.json()).then(data=>{
+    new Chart(document.getElementById("perfChart"),{
+        type:"pie",
+        data:{
+            labels:["Success","Failure"],
+            datasets:[{
+                data:[data.success, data.failure]
+            }]
+        }
+    });
+});
+</script>
+
+{% endblock %}

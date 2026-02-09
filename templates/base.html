@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Face Attendance System</title>
+
+    <!-- Open Sans Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600;700&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- Font Awesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+
+    <!-- Custom Theme -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css') }}">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body {
+            font-family: 'Open Sans', sans-serif;
+        }
+    </style>
+</head>
+
+<body>
+
+<!-- 🌊 LIQUID GLASS NAVBAR -->
+<nav class="navbar navbar-expand-lg navbar-dark fixed-top">
+    <div class="container-fluid px-4">
+
+        <!-- BRAND -->
+        <a class="navbar-brand fw-bold" href="/">
+            Face Attendance System
+        </a>
+
+        <!-- TOGGLER -->
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
+                data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+
+        <!-- NAV LINKS -->
+        <div class="collapse navbar-collapse" id="navbarNav">
+
+            <!-- LEFT LINKS -->
+            <ul class="navbar-nav me-auto gap-2">
+                <li class="nav-item">
+                    <a class="nav-link" href="/">
+                        <i class="fa-solid fa-video"></i> Live
+                    </a>
+                </li>
+
+                <li class="nav-item">
+                    <a class="nav-link" href="/enroll">
+                        <i class="fa-solid fa-user-plus"></i> Enroll
+                    </a>
+                </li>
+
+                <li class="nav-item">
+                    <a class="nav-link" href="/attendance">
+                        <i class="fa-solid fa-calendar-check"></i> Attendance
+                    </a>
+                </li>
+
+                <li class="nav-item">
+                    <a class="nav-link" href="/feedback">
+                        <i class="fa-solid fa-star"></i> Feedback
+                    </a>
+                </li>
+
+                <li class="nav-item">
+                    <a class="nav-link" href="/grievance">
+                        <i class="fa-solid fa-circle-exclamation"></i> Grievance
+                    </a>
+                </li>
+            </ul>
+
+            <!-- RIGHT LINKS -->
+            <ul class="navbar-nav">
+                <li class="nav-item">
+                    <!-- ✅ ADMIN ALWAYS GOES TO LOGIN -->
+                    <a class="nav-link" href="/login">
+                        <i class="fa-solid fa-user-shield"></i> Admin
+                    </a>
+                </li>
+            </ul>
+
+        </div>
+    </div>
+</nav>
+
+<!-- PAGE CONTENT -->
+<div class="container mt-5 pt-4">
+    {% block content %}{% endblock %}
+</div>
+
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<div class="toast-container position-fixed bottom-0 end-0 p-3">
+  <div id="liveToast" class="toast align-items-center text-bg-success border-0">
+    <div class="d-flex">
+      <div class="toast-body" id="toastMsg">Action successful</div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto"
+              data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+
+<script>
+function showToast(msg, type="success"){
+    const toastEl = document.getElementById("liveToast");
+    toastEl.className = `toast align-items-center text-bg-${type} border-0`;
+    document.getElementById("toastMsg").innerText = msg;
+    new bootstrap.Toast(toastEl).show();
+}
+</script>
+
+</body>
+</html>
