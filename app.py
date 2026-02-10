@@ -42,6 +42,7 @@ blink_detected = False
 head_moved = False
 prev_face_x = None
 camera_enabled = False
+attendance_status = ""
 
 
 
@@ -62,6 +63,9 @@ TOTAL_EMPLOYEES = 10    # change later (will auto-calc with users table)
 
 # ------------------ OpenCV Setup ------------------
 camera = cv2.VideoCapture(CAMERA_INDEX)
+if not camera.isOpened():
+    print("❌ ERROR: Camera not accessible")
+
 face_cascade = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
 
 recognizer = cv2.face.LBPHFaceRecognizer_create()
@@ -147,14 +151,20 @@ def generate_frames():
                 status_text = "Liveness: Verified"
                 status_color = (0, 255, 0)
 
+                global attendance_status
+
                 user_id, conf = recognizer.predict(face_roi)
+
                 if conf < THRESHOLD:
                     label = f"ID {user_id}"
                     color = (0, 255, 0)
                     mark_attendance(user_id)
+                    attendance_status = "success"
                 else:
                     label = "Unknown"
                     color = (0, 0, 255)
+                    attendance_status = "failed"
+
             else:
                 label = "Complete Liveness Check"
                 color = (0, 255, 255)
@@ -617,6 +627,13 @@ def accuracy_data():
         "labels": ["Accuracy"],
         "values": [acc]
     })
+
+@app.route("/attendance_status")
+def attendance_status_api():
+    global attendance_status
+    status = attendance_status
+    attendance_status = ""  # reset after reading
+    return jsonify({"status": status})
 
 
 
