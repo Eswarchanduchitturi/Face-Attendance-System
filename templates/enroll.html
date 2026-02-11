@@ -1,129 +1,127 @@
 {% extends "base.html" %}
 {% block content %}
 
-<div class="row justify-content-center mt-5">
-    <div class="col-md-6 col-lg-5">
+<div class="container mt-5">
 
-        <div class="frosted-card fade-in text-center">
+    <div class="text-center mb-5">
+        <h1 class="fw-bold">Face Attendance System</h1>
+        <p class="text-muted">Employee Face Enrollment</p>
+    </div>
 
-            <h4 class="mb-4">
-                <i class="fa-solid fa-user-plus"></i>
-                Face Enrollment
-            </h4>
+    <!-- FORM -->
+    <div class="row justify-content-center">
+        <div class="col-md-5">
 
-            <!-- STATUS BANNER -->
-            <div id="statusBanner" class="alert d-none"></div>
-
-            <!-- PROGRESS BAR -->
-            <div id="progressBox" class="d-none mt-3">
-                <div class="progress mb-2" style="height:20px;">
-                    <div id="progressBar"
-                         class="progress-bar progress-bar-striped progress-bar-animated bg-info"
-                         style="width:0%">0%</div>
-                </div>
-                <small id="progressText">Initializing...</small>
-            </div>
-
-            <!-- TEST PREVIEW RESULT -->
-            <div id="testResult" class="alert alert-info d-none mt-3"></div>
-
-            <!-- ENROLL FORM -->
             <form id="enrollForm">
-                <input type="number" name="user_id" class="form-control mb-3"
-                       placeholder="User ID" required>
 
-                <input type="text" name="name" class="form-control mb-3"
+                <input type="number" name="user_id"
+                       class="form-control mb-3"
+                       placeholder="Employee ID" required>
+
+                <input type="text" name="name"
+                       class="form-control mb-3"
                        placeholder="Full Name" required>
 
-                <input type="email" name="email" class="form-control mb-3"
-                       placeholder="Email">
-
-                <input type="text" name="department" class="form-control mb-4"
-                       placeholder="Department">
-
-                <button class="btn btn-success w-100">
-                    Start Face Enrollment
+                <button class="btn btn-primary w-100">
+                    Start Enrollment
                 </button>
+
             </form>
 
         </div>
     </div>
+
 </div>
 
+
+<!-- ================= FULLSCREEN ENROLLMENT MODAL ================= -->
+<div id="enrollOverlay" class="enroll-overlay d-none">
+
+    <div class="enroll-box text-center">
+
+        <img id="stepImage"
+             src=""
+             class="enroll-image mb-4">
+
+        <h4 id="stepTitle"></h4>
+
+        <div class="progress mt-4">
+            <div id="progressBar"
+                 class="progress-bar bg-dark"
+                 style="width:0%"></div>
+        </div>
+
+    </div>
+
+</div>
+
+
 <script>
-/* -------------------------------
-   STATUS BANNER
--------------------------------- */
-function showBanner(msg, type){
-    const banner = document.getElementById("statusBanner");
-    banner.className = `alert alert-${type}`;
-    banner.innerText = msg;
-    banner.classList.remove("d-none");
-}
 
-/* -------------------------------
-   PROGRESS BAR
--------------------------------- */
-async function updateProgress(p, text){
-    const bar = document.getElementById("progressBar");
-    bar.style.width = p + "%";
-    bar.innerText = p + "%";
-    document.getElementById("progressText").innerText = text;
-}
+const steps = [
+    {
+        title: "Camera Initialization",
+        image: "/static/images/enroll_steps/camera.gif",
+        progress: 10
+    },
+    {
+        title: "Sample Image Collection (50 Images)",
+        image: "/static/images/enroll_steps/capture.gif",
+        progress: 30
+    },
+    {
+        title: "Image Preprocessing",
+        image: "/static/images/enroll_steps/preprocess.png",
+        progress: 50
+    },
+    {
+        title: "Feature Extraction (LBPH)",
+        image: "/static/images/enroll_steps/lbph.png",
+        progress: 70
+    },
+    {
+        title: "Model Training",
+        image: "/static/images/enroll_steps/training.gif",
+        progress: 90
+    },
+    {
+        title: "Model Saved Successfully",
+        image: "/static/images/enroll_steps/success.gif",
+        progress: 100
+    }
+];
 
-/* -------------------------------
-   ENROLL FLOW
--------------------------------- */
-document.getElementById("enrollForm").onsubmit = async (e) => {
+
+document.getElementById("enrollForm").onsubmit = async function(e){
+
     e.preventDefault();
-
-    // Reset UI
-    document.getElementById("statusBanner").classList.add("d-none");
-    document.getElementById("testResult").classList.add("d-none");
 
     const form = new FormData(e.target);
     const userId = form.get("user_id");
 
-    // STEP 1: Save user details
+    document.getElementById("enrollOverlay").classList.remove("d-none");
+
+    for(let i = 0; i < steps.length; i++){
+
+        document.getElementById("stepImage").src = steps[i].image;
+        document.getElementById("stepTitle").innerText = steps[i].title;
+        document.getElementById("progressBar").style.width =
+            steps[i].progress + "%";
+
+        await new Promise(r => setTimeout(r, 1500));
+    }
+
+    // Backend capture + training
     await fetch("/enroll", { method:"POST", body: form });
+    await fetch(`/capture/${userId}`);
+    await fetch("/train_test_progress");
 
-    // STEP 2: Start progress
-    document.getElementById("progressBox").classList.remove("d-none");
-    updateProgress(20, "Capturing face images...");
-
-    // STEP 3: Capture faces
-    const capture = await fetch(`/capture/${userId}`);
-    const captureResult = await capture.json();
-
-    if(captureResult.status !== "captured"){
-        showBanner("Face capture failed ❌", "danger");
-        return;
-    }
-
-    // STEP 4: Train model
-    updateProgress(60, "Training model...");
-    const train = await fetch("/train_test_progress");
-    const trainResult = await train.json();
-
-    if(trainResult.status !== "success"){
-        showBanner("Training failed ❌", "danger");
-        return;
-    }
-
-    // STEP 5: Testing complete
-    updateProgress(100, "Testing completed ✔");
-
-    // STEP 6: AUTOMATIC TEST RECOGNITION PREVIEW
-    const preview = await fetch("/test_preview");
-    const previewData = await preview.json();
-
-    const testBox = document.getElementById("testResult");
-    testBox.innerText = previewData.result;
-    testBox.classList.remove("d-none");
-
-    // FINAL SUCCESS
-    showBanner("Enrollment successful ✔ Model trained & verified", "success");
+    setTimeout(()=>{
+        document.getElementById("enrollOverlay").classList.add("d-none");
+        showTopToast("Enrollment Completed Successfully ✅");
+    }, 1000);
 };
+
 </script>
 
 {% endblock %}

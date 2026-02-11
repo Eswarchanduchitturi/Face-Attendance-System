@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="container mt-5">
+
+    <!-- PAGE HEADER -->
+    <div class="text-center mb-5">
+        <h1 class="fw-bold">Support Center</h1>
+        <p class="text-muted">
+            Help, Feedback, Grievances & System Overview
+        </p>
+    </div>
+
+    <!-- ================= ABOUT SECTION ================= -->
+    <div class="support-card mb-5">
+
+        <h3 class="mb-4">About Face Attendance System</h3>
+
+        <!-- BLOCK DIAGRAM -->
+        <div class="text-center mb-4">
+            <img src="{{ url_for('static', filename='images/block_diagram.png') }}"
+                 class="img-fluid rounded shadow"
+                 alt="System Block Diagram">
+        </div>
+
+        <!-- EXPLANATION -->
+        <h5>How the Application Works</h5>
+
+        <ul class="mt-3">
+            <li>
+                The system captures live video through the camera
+                during check-in or check-out sessions.
+            </li>
+            <li>
+                Each frame is processed using the Haar Cascade
+                algorithm to detect facial regions.
+            </li>
+            <li>
+                Detected faces are converted into grayscale
+                and preprocessed for better recognition accuracy.
+            </li>
+            <li>
+                Facial features are extracted using the
+                LBPH (Local Binary Pattern Histogram) algorithm.
+            </li>
+            <li>
+                Extracted features are compared with trained
+                employee facial data stored in the model.
+            </li>
+            <li>
+                If the identity is verified, attendance is marked
+                either as Check-In or Check-Out.
+            </li>
+            <li>
+                The system automatically calculates worked hours
+                based on login and logout timestamps.
+            </li>
+            <li>
+                All records are securely stored in the database
+                with date, day, and time details.
+            </li>
+        </ul>
+
+        <hr class="my-4">
+
+        <h5>Core Technologies Used</h5>
+
+        <ul>
+            <li>Python & Flask (Backend Framework)</li>
+            <li>OpenCV (Computer Vision Processing)</li>
+            <li>Haar Cascade (Face Detection)</li>
+            <li>LBPH Face Recognizer (Feature Extraction)</li>
+            <li>SQLite Database (Data Storage)</li>
+            <li>Bootstrap & Custom CSS (Modern UI)</li>
+        </ul>
+
+        <hr class="my-4">
+
+        <h5>System Features</h5>
+
+        <ul>
+            <li>Smart Check-In & Check-Out Mode</li>
+            <li>Automatic Worked Hours Calculation</li>
+            <li>Live Face Verification</li>
+            <li>Recognition Accuracy Monitoring</li>
+            <li>Admin Dashboard & Analytics</li>
+            <li>Attendance History & PDF Export</li>
+            <li>Employee Enrollment & Model Training</li>
+            <li>Complaint & Feedback Management</li>
+        </ul>
+
+    </div>
+
+    <!-- ================= FEEDBACK / GRIEVANCE ================= -->
+    <div class="support-card">
+
+        <h4 class="mb-3">Submit Feedback or Grievance</h4>
+
+        <form method="POST" action="/support">
+
+            <div class="mb-3">
+                <label class="form-label">Category</label>
+                <select name="category" class="form-control">
+                    <option value="Feedback">Feedback</option>
+                    <option value="Technical Issue">Technical Issue</option>
+                    <option value="Complaint">Complaint</option>
+                </select>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Message</label>
+                <textarea name="message"
+                          rows="4"
+                          class="form-control"
+                          required></textarea>
+            </div>
+
+            <button class="btn btn-primary">
+                Submit
+            </button>
+
+        </form>
+
+    </div>
+
+</div>
+
+{% endblock %}

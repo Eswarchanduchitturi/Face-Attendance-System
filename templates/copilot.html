@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="copilot-container">
+
+    <div class="copilot-header">
+        🤖 FAS Copilot
+        <p>Your AI Assistant for Face Attendance System</p>
+    </div>
+
+    <div id="chatBox" class="chat-box"></div>
+
+    <div class="chat-input-area">
+        <input type="text"
+               id="chatInput"
+               placeholder="Ask me about attendance, admin tools, analytics..."
+               onkeypress="if(event.key==='Enter') sendMessage()">
+
+        <button onclick="sendMessage()">
+            Send
+        </button>
+    </div>
+
+</div>
+
+<script>
+
+function sendMessage(){
+
+    const input = document.getElementById("chatInput");
+    const message = input.value.trim();
+    if(!message) return;
+
+    appendMessage("You", message);
+
+    fetch("/ai_assistant", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({message: message})
+    })
+    .then(res => res.json())
+    .then(data => {
+        appendMessage("FAS Copilot", data.reply);
+    });
+
+    input.value = "";
+}
+function appendMessage(sender, text){
+
+    const box = document.getElementById("chatBox");
+
+    const msg = document.createElement("div");
+
+    if(sender === "You"){
+        msg.className = "user-msg-glass";
+    } else {
+        msg.className = "bot-msg-round";
+    }
+
+    msg.innerHTML = text;
+
+    box.appendChild(msg);
+    box.scrollTop = box.scrollHeight;
+}
+
+</script>
+
+{% endblock %}

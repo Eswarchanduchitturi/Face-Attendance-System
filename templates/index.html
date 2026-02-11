@@ -1,89 +1,148 @@
 {% extends "base.html" %}
 {% block content %}
 
-<div class="row justify-content-center fade-in">
-    <div class="col-lg-8">
+<div class="container mt-5">
 
-        <div class="frosted-card text-center">
-            <h4 class="mb-3">
-                <i class="fa-solid fa-camera"></i> Live Face Recognition
-            </h4>
+    <!-- HEADER -->
+    <div class="text-center mb-5">
+        <h1 class="fw-bold">Face Attendance System</h1>
+        <p class="text-muted">Smart Check-In & Check-Out Recognition</p>
+    </div>
 
-            <!-- VIDEO FEED (NO SRC BY DEFAULT) -->
-            <img id="videoFeed"
-                 class="img-fluid rounded mb-3 d-none"
-                 style="border:1px solid rgba(255,255,255,0.2);
-                        max-height:420px;" />
+    <!-- CAMERA SECTION -->
+    <div class="text-center">
 
-            <!-- CONTROLS -->
-            <div class="d-flex justify-content-center gap-3">
-                <button class="btn btn-success px-4" onclick="cameraOn()">
-                    <i class="fa-solid fa-play"></i> Camera ON
-                </button>
-                <button class="btn btn-danger px-4" onclick="cameraOff()">
-                    <i class="fa-solid fa-stop"></i> Camera OFF
-                </button>
-            </div>
+        <!-- CAMERA CARD -->
+<div class="camera-card mx-auto mb-4">
 
-            <!-- STATUS -->
-            <p id="camStatus" class="mt-3 text-info fw-semibold">
-                Camera Status: OFF
-            </p>
+    <img id="videoFeed"
+         class="camera-feed d-none"
+         alt="Live Camera" />
+
+    <div id="cameraPlaceholder" class="camera-placeholder">
+        <i class="fa-solid fa-video fa-2x mb-2"></i>
+        <div>Camera Preview</div>
+    </div>
+
+</div>
+
+
+        <!-- SCAN STATUS -->
+        <p id="scanStatus" class="text-muted fw-semibold mb-4">
+            Camera is OFF
+        </p>
+
+        <!-- BUTTONS -->
+        <div class="d-flex justify-content-center gap-3">
+            <button class="btn btn-primary" onclick="cameraOn()">
+                Start Camera
+            </button>
+            <button class="btn btn-secondary" onclick="cameraOff()">
+                Stop Camera
+            </button>
         </div>
-        <div id="attendanceMsg"
-     class="alert d-none mt-3"
-     role="alert"></div>
 
     </div>
+
 </div>
 
 <script>
+
+let attendanceInterval = null;
+
+/* ================= CAMERA ON ================= */
 async function cameraOn() {
-    await fetch("/camera/on");   // ✅ TURN BACKEND CAMERA ON
+
+    await fetch("/camera/on");
 
     const img = document.getElementById("videoFeed");
+    const placeholder = document.getElementById("cameraPlaceholder");
+
     img.src = "/video";
     img.classList.remove("d-none");
+    placeholder.style.display = "none";
 
-    document.getElementById("camStatus").innerText =
-        "Camera Status: ON";
+    document.getElementById("scanStatus").innerText =
+        "Scanning... Please look at the camera";
+
+    startAttendanceCheck();
 }
 
+/* ================= CAMERA OFF ================= */
 async function cameraOff() {
-    await fetch("/camera/off");  // ✅ TURN BACKEND CAMERA OFF
+
+    await fetch("/camera/off");
 
     const img = document.getElementById("videoFeed");
+    const placeholder = document.getElementById("cameraPlaceholder");
+
     img.src = "";
     img.classList.add("d-none");
+    placeholder.style.display = "flex";
 
-    document.getElementById("camStatus").innerText =
-        "Camera Status: OFF";
+    document.getElementById("scanStatus").innerText =
+        "Camera is OFF";
+
+    stopAttendanceCheck();
 }
-</script>
-<script>
-setInterval(async () => {
-    const res = await fetch("/attendance_status");
-    const data = await res.json();
 
-    const box = document.getElementById("attendanceMsg");
+/* ================= START POLLING ================= */
+function startAttendanceCheck() {
 
-    if (data.status === "success") {
-        box.className = "alert alert-success mt-3";
-        box.innerText = "✅ Attendance Captured Successfully";
-        box.classList.remove("d-none");
+    if (attendanceInterval) return;
 
-        setTimeout(() => box.classList.add("d-none"), 3000);
+    attendanceInterval = setInterval(async () => {
+
+        const res = await fetch("/attendance_status");
+        const data = await res.json();
+
+        if (!data.status) return;
+
+        handleAttendanceStatus(data.status);
+
+    }, 5000);
+}
+
+/* ================= STOP POLLING ================= */
+function stopAttendanceCheck() {
+    if (attendanceInterval) {
+        clearInterval(attendanceInterval);
+        attendanceInterval = null;
+    }
+}
+
+/* ================= HANDLE STATUS ================= */
+function handleAttendanceStatus(status){
+
+    if (status === "checkin_success") {
+
+        showTopToast("Attendance Marked Successfully ✅");
+        stopAttendanceCheck();
     }
 
-    if (data.status === "failed") {
-        box.className = "alert alert-danger mt-3";
-        box.innerText = "❌ Attendance Capture Failed";
-        box.classList.remove("d-none");
+    else if (status.startsWith("checkout_success")) {
 
-        setTimeout(() => box.classList.add("d-none"), 3000);
+        const hrs = status.split("_")[2];
+        showTopToast("Checked Out ✔ Worked: " + hrs + " hrs");
+        stopAttendanceCheck();
     }
-}, 1500); // check every 1.5 seconds
-</script>
 
+    else if (status === "already_checked_in") {
+
+        showTopToast("Already Checked-In Today");
+    }
+
+    else if (status === "already_checked_out") {
+
+        showTopToast("Already Checked-Out Today");
+    }
+
+    else if (status === "failed") {
+
+        showTopToast("Recognition Failed ❌");
+    }
+}
+
+</script>
 
 {% endblock %}

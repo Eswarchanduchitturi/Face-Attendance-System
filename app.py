@@ -11,6 +11,7 @@ import numpy as np
 from PIL import Image
 import time
 
+
 # System metrics
 camera_status = "OFF"
 fps_value = 0
@@ -41,6 +42,7 @@ eye_cascade = cv2.CascadeClassifier(
 blink_detected = False
 head_moved = False
 prev_face_x = None
+camera = None
 camera_enabled = False
 attendance_status = ""
 
@@ -62,9 +64,6 @@ THRESHOLD = 65          # LBPH threshold (lower = stricter)
 TOTAL_EMPLOYEES = 10    # change later (will auto-calc with users table)
 
 # ------------------ OpenCV Setup ------------------
-camera = cv2.VideoCapture(CAMERA_INDEX)
-if not camera.isOpened():
-    print("❌ ERROR: Camera not accessible")
 
 face_cascade = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
 
@@ -77,19 +76,69 @@ def get_db():
 
 # ------------------ Attendance Logic ------------------
 def mark_attendance(user_id):
-    today = datetime.date.today().isoformat()
-    time_now = datetime.datetime.now().strftime("%H:%M:%S")
+    global attendance_mode
+
+    now = datetime.datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    day = now.strftime("%A")
+    time_now = now.strftime("%H:%M:%S")
 
     db = get_db()
     cur = db.cursor()
 
+    # Get today's record
     cur.execute("""
-        INSERT OR IGNORE INTO attendance (user_id, date, time)
-        VALUES (?, ?, ?)
-    """, (user_id, today, time_now))
+        SELECT checkin_time, checkout_time
+        FROM attendance
+        WHERE emp_id=? AND date=?
+    """, (user_id, today))
 
-    db.commit()
-    db.close()
+    record = cur.fetchone()
+
+    # -------------------------
+    # CHECK-IN MODE
+    # -------------------------
+    if attendance_mode == "checkin":
+
+        if record is None:
+            cur.execute("""
+                INSERT INTO attendance (emp_id, date, day, checkin_time)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, today, day, time_now))
+
+            db.commit()
+            db.close()
+            return "checkin_success"
+
+        db.close()
+        return "already_checked_in"
+
+    # -------------------------
+    # CHECK-OUT MODE
+    # -------------------------
+    elif attendance_mode == "checkout":
+
+        if record and record[1] is None:
+
+            login_dt = datetime.datetime.strptime(record[0], "%H:%M:%S")
+            logout_dt = datetime.datetime.strptime(time_now, "%H:%M:%S")
+
+            worked_hours = (logout_dt - login_dt).total_seconds() / 3600
+
+            cur.execute("""
+                UPDATE attendance
+                SET checkout_time=?, worked_hours=?
+                WHERE emp_id=? AND date=?
+            """, (time_now, worked_hours, user_id, today))
+
+            db.commit()
+            db.close()
+            return f"checkout_success_{round(worked_hours,2)}"
+
+        db.close()
+        return "already_checked_out"
+
+
 
 def get_attendance_stats():
     db = get_db()
@@ -115,12 +164,15 @@ def get_attendance_stats():
 
 # ------------------ Video Streaming ------------------
 def generate_frames():
-    global blink_detected, head_moved, prev_face_x, camera_enabled
+    global attendance_status, success_recognition, failed_recognition, camera
+
+    camera = cv2.VideoCapture(CAMERA_INDEX)
 
     while True:
+
         if not camera_enabled:
-            time.sleep(0.2)
-            continue
+            break
+
         success, frame = camera.read()
         if not success:
             break
@@ -128,59 +180,62 @@ def generate_frames():
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = face_cascade.detectMultiScale(gray, 1.3, 5)
 
-        status_text = "Liveness: Not Verified"
-        status_color = (0, 0, 255)
+        status_text = "Detecting Face..."
+        status_color = (0, 200, 255)
+
+        if len(faces) > 0:
+            status_text = "Face Detected"
+            status_color = (255, 200, 0)
 
         for (x, y, w, h) in faces:
+
             face_roi = gray[y:y+h, x:x+w]
 
-            # ---------- Blink Detection ----------
-            eyes = eye_cascade.detectMultiScale(face_roi)
-            if len(eyes) == 0:
-                blink_detected = True
+            user_id, conf = recognizer.predict(face_roi)
 
-            # ---------- Head Movement ----------
-            face_center_x = x + w // 2
-            if prev_face_x is not None:
-                if abs(face_center_x - prev_face_x) > 20:
-                    head_moved = True
-            prev_face_x = face_center_x
+            if conf < THRESHOLD:
 
-            # ---------- Liveness Decision ----------
-            if blink_detected and head_moved:
-                status_text = "Liveness: Verified"
+                status_text = "Identity Verified"
                 status_color = (0, 255, 0)
 
-                global attendance_status
+                result = mark_attendance(user_id)
 
-                user_id, conf = recognizer.predict(face_roi)
+                attendance_status = result
 
-                if conf < THRESHOLD:
-                    label = f"ID {user_id}"
-                    color = (0, 255, 0)
-                    mark_attendance(user_id)
-                    attendance_status = "success"
-                else:
-                    label = "Unknown"
-                    color = (0, 0, 255)
-                    attendance_status = "failed"
+                success_recognition += 1
+
+                # Prevent rapid repeated marking
+                import time
+                time.sleep(2)
 
             else:
-                label = "Complete Liveness Check"
-                color = (0, 255, 255)
+                status_text = "Unknown Face"
+                status_color = (0, 0, 255)
 
-            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
-            cv2.putText(frame, label, (x, y-10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+                failed_recognition += 1
+                attendance_status = "failed"
 
-        cv2.putText(frame, status_text, (20, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, status_color, 3)
+            # Draw face rectangle
+            cv2.rectangle(frame, (x, y), (x+w, y+h), status_color, 2)
+
+        # 🔥 Draw background for status text (OUTSIDE face loop)
+        cv2.rectangle(frame, (10, 10), (700, 80), (0, 0, 0), -1)
+
+        cv2.putText(frame,
+                    status_text,
+                    (20, 55),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    status_color,
+                    2)
 
         _, buffer = cv2.imencode(".jpg", frame)
-        frame = buffer.tobytes()
 
         yield (b"--frame\r\n"
-               b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
+               b"Content-Type: image/jpeg\r\n\r\n" +
+               buffer.tobytes() + b"\r\n")
+
+    camera.release()
 
 
         
@@ -251,31 +306,61 @@ def video():
 
 @app.route("/attendance")
 def attendance():
+
     db = get_db()
+
+    # Get all attendance records
     rows = db.execute("""
-SELECT attendance.id, users.name, attendance.date, attendance.time
-FROM attendance
-JOIN users ON users.id = attendance.user_id
-ORDER BY attendance.date DESC
-""").fetchall()
+        SELECT id, emp_id, date, day,
+               checkin_time, checkout_time, worked_hours
+        FROM attendance
+        ORDER BY date DESC
+    """).fetchall()
+
+    # Total registered users
+    total_users = db.execute(
+        "SELECT COUNT(*) FROM users"
+    ).fetchone()[0]
+
+    # Total attendance sessions
+    total_count = db.execute(
+        "SELECT COUNT(*) FROM attendance"
+    ).fetchone()[0]
+
+    # Today's attendance count
+    today = datetime.date.today().isoformat()
+
+    today_count = db.execute("""
+        SELECT COUNT(DISTINCT emp_id)
+        FROM attendance
+        WHERE date = ?
+    """, (today,)).fetchone()[0]
 
     db.close()
 
-    today_count, total_count, percentage = get_attendance_stats()
+    # Calculate percentage
+    percentage = 0
+    if total_users > 0:
+        percentage = round(
+            (today_count / total_users) * 100,
+            2
+        )
 
     return render_template(
         "attendance.html",
         rows=rows,
-        today_count=today_count,
+        total_users=total_users,
         total_count=total_count,
+        today_count=today_count,
         percentage=percentage
     )
+
 
 @app.route("/download/pdf")
 def download_pdf():
     db = get_db()
     rows = db.execute("""
-        SELECT user_id, date, time
+        SELECT emp_id, date, checkin_time, checkout_time, worked_hours
         FROM attendance
         ORDER BY date DESC, time DESC
     """).fetchall()
@@ -288,6 +373,12 @@ def download_pdf():
 
     text.textLine("Attendance Report")
     text.textLine("-------------------------------")
+    text.textLine(
+    f"User ID: {r[0]} | Date: {r[1]} | "
+    f"In: {r[2]} | Out: {r[3]} | "
+    f"Hours: {round(r[4],2) if r[4] else 'N/A'}"
+)
+
 
     for r in rows:
         text.textLine(f"User ID: {r[0]} | Date: {r[1]} | Time: {r[2]}")
@@ -380,7 +471,7 @@ def set_threshold():
 def stats():
     db = get_db()
     data = db.execute("""
-    SELECT date, COUNT(*) FROM attendance
+    SELECT COUNT(DISTINCT emp_id)
     GROUP BY date
     """).fetchall()
     db.close()
@@ -545,8 +636,13 @@ def camera_on():
 
 @app.route("/camera/off")
 def camera_off():
-    global camera_enabled
+    global camera_enabled, camera
     camera_enabled = False
+
+    if camera is not None:
+        camera.release()
+        camera = None
+
     return jsonify({"status": "OFF"})
 
 @app.route("/train_and_test")
@@ -620,13 +716,145 @@ def logout():
 
 @app.route("/admin/accuracy_data")
 def accuracy_data():
-    total = success_recognition + failed_recognition
-    acc = round((success_recognition / total) * 100, 2) if total else 0
+
+    date_filter = request.args.get("date")
+
+    db = get_db()
+    cur = db.cursor()
+
+    if date_filter:
+        cur.execute("""
+            SELECT strftime('%H:00', date || ' ' || checkin_time) as hour,
+                   SUM(CASE WHEN status != 'failed' THEN 1 ELSE 0 END) as success,
+                   SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failure
+            FROM attendance
+            WHERE date = ?
+            GROUP BY hour
+            ORDER BY hour
+        """, (date_filter,))
+    else:
+        cur.execute("""
+            SELECT strftime('%H:00', date || ' ' || checkin_time) as hour,
+                   SUM(CASE WHEN status != 'failed' THEN 1 ELSE 0 END) as success,
+                   SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failure
+            FROM attendance
+            GROUP BY hour
+            ORDER BY hour
+        """)
+
+    rows = cur.fetchall()
+    db.close()
+
+    result = []
+
+    for hour, success, failure in rows:
+        total = (success or 0) + (failure or 0)
+
+        accuracy = round((success / total) * 100, 2) if total else 0
+
+        result.append({
+            "hour": hour,
+            "accuracy": accuracy
+        })
+
+    return jsonify(result)
+@app.route("/admin/success_failure_data")
+def success_failure_data():
+    db = get_db()
+    data = db.execute("""
+        SELECT date,
+               SUM(CASE WHEN status!='failed' THEN 1 ELSE 0 END),
+               SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END)
+        FROM attendance
+        GROUP BY date
+    """).fetchall()
+    db.close()
 
     return jsonify({
-        "labels": ["Accuracy"],
-        "values": [acc]
+        "labels": [d[0] for d in data],
+        "success": [d[1] for d in data],
+        "failure": [d[2] for d in data]
     })
+@app.route("/admin/confidence_distribution")
+def confidence_distribution():
+
+    # Example ranges
+    labels = ["0-50", "50-70", "70-85", "85-100"]
+    values = [5, 10, 25, 40]  # Replace with real stored confidence
+
+    return jsonify({
+        "labels": labels,
+        "values": values
+    })
+@app.route("/admin/delete_attendance/<int:record_id>")
+def delete_attendance(record_id):
+
+    if not session.get("admin"):
+        return redirect("/login")
+
+    db = get_db()
+    db.execute("DELETE FROM attendance WHERE id = ?", (record_id,))
+    db.commit()
+    db.close()
+
+    return redirect("/attendance")
+@app.route("/admin/delete_employee_attendance/<emp_id>")
+def delete_employee_attendance(emp_id):
+
+    if not session.get("admin"):
+        return redirect("/login")
+
+    db = get_db()
+    db.execute("DELETE FROM attendance WHERE emp_id = ?", (emp_id,))
+    db.commit()
+    db.close()
+
+    return redirect("/attendance")
+@app.route("/admin/edit_attendance/<int:record_id>", methods=["POST"])
+def edit_attendance(record_id):
+
+    checkin = request.form.get("checkin_time")
+    checkout = request.form.get("checkout_time")
+
+    db = get_db()
+    db.execute("""
+        UPDATE attendance
+        SET checkin_time=?, checkout_time=?
+        WHERE id=?
+    """, (checkin, checkout, record_id))
+
+    db.commit()
+    db.close()
+
+    return redirect("/attendance")
+@app.route("/admin/bulk_delete", methods=["POST"])
+def bulk_delete():
+
+    ids = request.json.get("ids")
+
+    db = get_db()
+    for rid in ids:
+        db.execute("DELETE FROM attendance WHERE id=?", (rid,))
+    db.commit()
+    db.close()
+
+    return jsonify({"status": "success"})
+
+@app.route("/admin/manual_attendance", methods=["POST"])
+def manual_attendance():
+    emp_id = request.form.get("emp_id")
+    date = request.form.get("date")
+    checkin = request.form.get("checkin")
+
+    db = get_db()
+    db.execute("""
+        INSERT INTO attendance (emp_id, date, checkin_time)
+        VALUES (?, ?, ?)
+    """, (emp_id, date, checkin))
+
+    db.commit()
+    db.close()
+    return redirect("/attendance")
 
 @app.route("/attendance_status")
 def attendance_status_api():
@@ -634,6 +862,108 @@ def attendance_status_api():
     status = attendance_status
     attendance_status = ""  # reset after reading
     return jsonify({"status": status})
+
+@app.route("/support", methods=["GET", "POST"])
+def support():
+
+    db = get_db()
+
+    if request.method == "POST":
+
+        form_type = request.form.get("type")
+        message = request.form.get("message")
+        rating = request.form.get("rating")
+        category = request.form.get("category")
+
+        if form_type == "feedback":
+            db.execute("""
+                INSERT INTO feedback (rating, message, date)
+                VALUES (?, ?, date('now'))
+            """, (rating, message))
+
+        elif form_type == "grievance":
+            db.execute("""
+                INSERT INTO complaints (category, description, date)
+                VALUES (?, ?, date('now'))
+            """, (category, message))
+
+        db.commit()
+
+    db.close()
+
+    return render_template("support.html")
+
+@app.route("/set_mode/<mode>")
+def set_mode(mode):
+    global attendance_mode
+
+    if mode in ["checkin", "checkout"]:
+        attendance_mode = mode
+
+    return jsonify({"mode": attendance_mode})
+
+
+@app.route("/copilot")
+def copilot():
+    return render_template("copilot.html")
+@app.route("/ai_assistant", methods=["POST"])
+def ai_assistant():
+
+    user_msg = request.json.get("message").lower()
+
+    if "check in" in user_msg:
+        reply = "To check in, open Live → Check-In Session and complete face verification."
+
+    elif "check out" in user_msg:
+        reply = "To check out, open Live → Check-Out Session and complete verification."
+
+    elif "attendance percentage" in user_msg:
+        reply = "Attendance percentage = (Today's Attendance / Total Users) × 100."
+
+    elif "camera not working" in user_msg:
+        reply = "Make sure no other application is using the camera and refresh the page."
+
+    elif "delete record" in user_msg:
+        reply = "Go to Attendance page and use the delete option next to the record."
+
+    else:
+        reply = "I'm FAS Copilot 🤖. I can help with attendance, admin tools, analytics, reports, and troubleshooting."
+
+    return jsonify({"reply": reply})
+@app.route("/api/copilot", methods=["POST"])
+def copilot_api():
+    data = request.json
+    message = data.get("message", "").lower()
+
+    reply = "I'm FAS Copilot 🤖. How can I help you?"
+
+    # Attendance help
+    if "attendance" in message:
+        reply = "You can view attendance in the Attendance page. Use filters for daily, weekly, or monthly insights."
+
+    elif "check in" in message:
+        reply = "To check-in, select Check-In Session under Live and start the camera."
+
+    elif "check out" in message:
+        reply = "To check-out, select Check-Out Session under Live and verify your face."
+
+    elif "admin" in message:
+        reply = "Admin dashboard provides analytics, reports, complaints management, and accuracy monitoring."
+
+    elif "accuracy" in message:
+        reply = "Model accuracy is calculated using successful recognitions divided by total recognitions."
+
+    elif "report" in message:
+        reply = "You can download PDF reports from Attendance or Admin dashboard."
+
+    elif "support" in message or "complaint" in message:
+        reply = "Use Support Center to submit complaints or feedback."
+
+    elif "user" in message:
+        reply = "You can enroll new users from the Enroll page."
+
+    return jsonify({"reply": reply})
+
 
 
 

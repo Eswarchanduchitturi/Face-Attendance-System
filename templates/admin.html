@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 
-<h3 class="mb-4">Admin Dashboard</h3>
+<h3 class="mb-4">AI Performance Analytics Panel</h3>
 
+<!-- SUMMARY CARDS -->
 <div class="row g-4">
 
-    <!-- TOTAL USERS -->
     <div class="col-md-4">
         <div class="frosted-card text-center">
             <h6>Total Users</h6>
@@ -13,7 +13,6 @@
         </div>
     </div>
 
-    <!-- TOTAL ATTENDANCE -->
     <div class="col-md-4">
         <div class="frosted-card text-center">
             <h6>Total Attendance Records</h6>
@@ -21,7 +20,6 @@
         </div>
     </div>
 
-    <!-- THRESHOLD -->
     <div class="col-md-4">
         <div class="frosted-card text-center">
             <h6>Recognition Threshold</h6>
@@ -32,121 +30,258 @@
 </div>
 
 <hr class="my-4">
+<hr class="my-4">
 
-<!-- ADMIN ACTIONS -->
-<div class="row g-3">
+<div class="row g-3 mb-4">
 
-    <div class="col-md-4">
-        <a href="/admin/download_report" class="btn btn-success w-100">
-            <i class="fa-solid fa-file-pdf"></i> Download Full Report
-        </a>
-    </div>
-
-    <div class="col-md-4">
+    <div class="col-md-6">
         <a href="/admin/complaints" class="btn btn-warning w-100">
-            <i class="fa-solid fa-bug"></i> Manage Complaints
+            <i class="fa-solid fa-bug"></i>
+            Manage Complaints
         </a>
     </div>
 
-    <div class="col-md-4">
+    <div class="col-md-6">
         <a href="/admin/feedback" class="btn btn-info w-100">
-            <i class="fa-solid fa-star"></i> View Feedback
+            <i class="fa-solid fa-star"></i>
+            View Feedback
         </a>
     </div>
 
 </div>
 
 
+<!-- FILTER + CONTROLS -->
+<div class="frosted-card mb-4">
+    <div class="row g-3 align-items-center">
 
-<script>
-setInterval(()=>{
-    fetch("/admin/model_accuracy")
-    .then(r=>r.json())
-    .then(d=>{
-        document.getElementById("accuracy").innerText = d.accuracy + "%";
-        document.getElementById("accDetail").innerText =
-            `Success: ${d.success} | Failed: ${d.failure}`;
-    });
-}, 2000);
-</script>
+        <div class="col-md-3">
+            <input type="date" id="dateFilter" class="form-control">
+        </div>
 
+        <div class="col-md-3">
+            <select id="rangeToggle" class="form-control">
+                <option value="today">Today</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+            </select>
+        </div>
 
-<script>
-fetch("/stats/daily")
-.then(r => r.json())
-.then(data => {
-    const labels = data.map(d => d[0]);
-    const values = data.map(d => d[1]);
+        <div class="col-md-3">
+            <button class="btn btn-primary w-100" onclick="loadAllCharts()">
+                Manual Refresh
+            </button>
+        </div>
 
-    new Chart(document.getElementById("attendanceChart"), {
-        type: "line",
-        data: {
-            labels,
-            datasets: [{
-                label: "Attendance Trend",
-                data: values,
-                borderColor: "#00f2fe",
-                backgroundColor: "rgba(0,242,254,0.15)",
-                tension: 0.4,
-                fill: true
-            }]
-        },
-        options: {
-            plugins: { legend: { labels: { color: "white" } } },
-            scales: {
-                x: { ticks: { color: "white" } },
-                y: { ticks: { color: "white" } }
-            }
-        }
-    });
-});
-</script>
-<div class="frosted-card mt-4">
-    <h6>Model Accuracy (Live)</h6>
+        <div class="col-md-3 text-end">
+            <button class="btn btn-outline-secondary"
+                    onclick="exportChart(accuracyChart)">
+                Export Accuracy Chart
+            </button>
+        </div>
+
+    </div>
+</div>
+
+<!-- ACCURACY LINE + SCATTER -->
+<div class="frosted-card mb-4">
+    <h6>Model Accuracy Trend</h6>
     <canvas id="accuracyChart" height="120"></canvas>
 </div>
 
-<script>
-const ctx = document.getElementById("accuracyChart");
+<!-- SUCCESS VS FAILURE STACKED BAR -->
+<div class="frosted-card mb-4">
+    <h6>Success vs Failure Distribution</h6>
+    <canvas id="successFailureChart" height="120"></canvas>
+</div>
 
-const accChart = new Chart(ctx, {
-    type: "line",
-    data: {
-        labels: [],
-        datasets: [{
-            label: "Accuracy %",
-            data: [],
-            borderColor: "#00ffcc",
-            tension: 0.4,
-            fill: false
-        }]
-    },
-    options: {
-        responsive: true,
-        scales: {
-            y: { min: 0, max: 100 }
-        }
-    }
-});
+<!-- CONFIDENCE DISTRIBUTION -->
+<div class="frosted-card mb-4">
+    <h6>Model Confidence Distribution</h6>
+    <canvas id="confidenceChart" height="120"></canvas>
+</div>
 
-setInterval(() => {
-    fetch("/admin/accuracy_data")
-        .then(r => r.json())
-        .then(d => {
-            const time = new Date().toLocaleTimeString();
-            accChart.data.labels.push(time);
-            accChart.data.datasets[0].data.push(d.values[0]);
-
-            if (accChart.data.labels.length > 10) {
-                accChart.data.labels.shift();
-                accChart.data.datasets[0].data.shift();
-            }
-            accChart.update();
-        });
-}, 3000);
-</script>
 <a href="/logout" class="btn btn-danger btn-sm float-end">
     Logout
 </a>
+
+<script>
+
+let accuracyChart;
+let successFailureChart;
+let confidenceChart;
+
+function loadAllCharts(){
+    loadAccuracy();
+    loadSuccessFailure();
+    loadConfidence();
+}
+
+/* ================= ACCURACY CHART ================= */
+function loadAccuracy(){
+
+    const date = document.getElementById("dateFilter").value;
+    const range = document.getElementById("rangeToggle").value;
+
+    let url = `/admin/accuracy_data?range=${range}`;
+    if(date){
+        url += `&date=${date}`;
+    }
+
+    fetch(url)
+    .then(res => res.json())
+    .then(data => {
+
+        const labels = data.map(d => d.hour);
+        const values = data.map(d => d.accuracy);
+
+        const movingAvg = values.map((val, i, arr)=>{
+            if(i < 2) return null;
+            return ((arr[i] + arr[i-1] + arr[i-2]) / 3).toFixed(2);
+        });
+
+        const peak = Math.max(...values);
+
+        if(accuracyChart){
+            accuracyChart.destroy();
+        }
+
+        const ctx = document.getElementById("accuracyChart").getContext("2d");
+
+        const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+        gradient.addColorStop(0, "rgba(0, 123, 255, 0.4)");
+        gradient.addColorStop(1, "rgba(0, 123, 255, 0)");
+
+        accuracyChart = new Chart(ctx, {
+            data: {
+                labels: labels,
+                datasets: [
+
+                    {
+                        type: "line",
+                        label: "Accuracy %",
+                        data: values,
+                        borderWidth: 2,
+                        tension: 0.4,
+                        backgroundColor: gradient,
+                        fill: true
+                    },
+
+                    {
+                        type: "scatter",
+                        label: "Data Points",
+                        data: values.map((v,i)=>({x:labels[i], y:v})),
+                        pointRadius: 6
+                    },
+
+                    {
+                        type: "line",
+                        label: "Moving Average",
+                        data: movingAvg,
+                        borderDash: [5,5],
+                        tension: 0.4
+                    }
+
+                ]
+            },
+            options: {
+                responsive: true,
+                animation: true,
+                scales: {
+                    y: { min: 0, max: 100 }
+                }
+            }
+        });
+
+        const peakIndex = values.indexOf(peak);
+        accuracyChart.data.datasets[1].data[peakIndex].r = 10;
+        accuracyChart.update();
+
+    });
+}
+
+/* ================= SUCCESS / FAILURE ================= */
+function loadSuccessFailure(){
+
+    fetch("/admin/success_failure_data")
+    .then(res=>res.json())
+    .then(data=>{
+
+        if(successFailureChart){
+            successFailureChart.destroy();
+        }
+
+        successFailureChart = new Chart(
+            document.getElementById("successFailureChart"),
+            {
+                type: "bar",
+                data: {
+                    labels: data.labels,
+                    datasets: [
+                        {
+                            label: "Success",
+                            data: data.success
+                        },
+                        {
+                            label: "Failure",
+                            data: data.failure
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: { stacked: true },
+                        y: { stacked: true }
+                    }
+                }
+            }
+        );
+    });
+}
+
+/* ================= CONFIDENCE DISTRIBUTION ================= */
+function loadConfidence(){
+
+    fetch("/admin/confidence_distribution")
+    .then(res=>res.json())
+    .then(data=>{
+
+        if(confidenceChart){
+            confidenceChart.destroy();
+        }
+
+        confidenceChart = new Chart(
+            document.getElementById("confidenceChart"),
+            {
+                type: "bar",
+                data: {
+                    labels: data.labels,
+                    datasets: [{
+                        label: "Confidence Range",
+                        data: data.values
+                    }]
+                },
+                options: {
+                    responsive: true
+                }
+            }
+        );
+    });
+}
+
+/* ================= EXPORT ================= */
+function exportChart(chart){
+    const url = chart.toBase64Image();
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "chart.png";
+    a.click();
+}
+
+/* INITIAL LOAD */
+loadAllCharts();
+
+</script>
 
 {% endblock %}
