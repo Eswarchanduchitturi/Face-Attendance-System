@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="container mt-5">
+
+    <h3 class="mb-4">User Management</h3>
+
+    <div class="table-responsive">
+        <table class="table modern-table align-middle">
+
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Role</th>
+                    <th width="220">Actions</th>
+                </tr>
+            </thead>
+
+            <tbody>
+            {% for user in users %}
+                <tr>
+                    <form method="POST" action="/admin/edit_user/{{ user[0] }}">
+                        <td>{{ user[0] }}</td>
+
+                        <td>
+                            <input type="text"
+                                   name="name"
+                                   value="{{ user[1] }}"
+                                   class="form-control"
+                                   required>
+                        </td>
+
+                        <td>
+                            <select name="role" class="form-select">
+                                <option value="user"
+                                    {% if user[2]=='user' %}selected{% endif %}>
+                                    User
+                                </option>
+                                <option value="admin"
+                                    {% if user[2]=='admin' %}selected{% endif %}>
+                                    Admin
+                                </option>
+                            </select>
+                        </td>
+
+                        <td class="d-flex gap-2">
+                            <button class="btn btn-success btn-sm">
+                                Update
+                            </button>
+
+                            <a href="/admin/delete_user/{{ user[0] }}"
+                               class="btn btn-danger btn-sm"
+                               onclick="return confirm('Delete this user permanently?')">
+                                Delete
+                            </a>
+                        </td>
+                    </form>
+                </tr>
+            {% endfor %}
+            </tbody>
+
+        </table>
+    </div>
+
+</div>
+
+{% endblock %}

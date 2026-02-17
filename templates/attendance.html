@@ -59,11 +59,6 @@
                    class="form-control"
                    style="max-width:200px;">
 
-            <button class="btn btn-outline-danger"
-                    onclick="bulkDelete()">
-                Delete Selected
-            </button>
-
             <a href="/download/pdf" class="btn btn-primary">
                 Download Report
             </a>
@@ -78,29 +73,26 @@
         <table class="table modern-table align-middle">
             <thead>
                 <tr>
-                    <th><input type="checkbox" id="selectAll"></th>
                     <th>Employee ID</th>
                     <th>Date</th>
                     <th>Day</th>
                     <th>Check-In</th>
                     <th>Check-Out</th>
                     <th>Worked Hours</th>
-                    <th>Actions</th>
+                    <th>Check-In Photo</th>
+                    <th>Check-Out Photo</th>
                 </tr>
             </thead>
             <tbody id="attendanceTable">
             {% for row in rows %}
                 <tr>
-                    <td>
-                        <input type="checkbox"
-                               class="recordCheckbox"
-                               value="{{ row[0] }}">
-                    </td>
                     <td>{{ row[1] }}</td>
                     <td>{{ row[2] }}</td>
                     <td>{{ row[3] }}</td>
+
                     <td>{{ row[4] if row[4] else '-' }}</td>
                     <td>{{ row[5] if row[5] else '-' }}</td>
+
                     <td>
                         {% if row[6] %}
                             <span class="badge bg-success">
@@ -110,19 +102,33 @@
                             -
                         {% endif %}
                     </td>
-                    <td>
-                        <a href="/admin/delete_attendance/{{ row[0] }}"
-                           class="btn btn-sm btn-danger"
-                           onclick="return confirm('Delete this record?')">
-                            Delete
-                        </a>
 
-                        <a href="/admin/delete_employee_attendance/{{ row[1] }}"
-                           class="btn btn-sm btn-warning"
-                           onclick="return confirm('Delete all records of this employee?')">
-                            Delete All
-                        </a>
+                    <!-- Check-In Image -->
+                    <td>
+                        {% if row[7] %}
+                            <img src="{{ url_for('static', filename=row[7]) }}"
+                                 style="width:80px; height:100px; object-fit:cover; border-radius:8px;"
+                                 onclick="openImage(this.src)"
+                                    class="passport-img"
+                                 class="hover-zoom">
+                        {% else %}
+                            -
+                        {% endif %}
                     </td>
+
+                    <!-- Check-Out Image -->
+                    <td>
+                        {% if row[8] %}
+                            <img src="{{ url_for('static', filename=row[8]) }}"
+                                style="width:80px; height:100px; object-fit:cover; border-radius:8px;"
+                                onclick="openImage(this.src)"
+                                    class="passport-img"
+                                class="hover-zoom">
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+
                 </tr>
             {% endfor %}
             </tbody>
@@ -150,6 +156,13 @@
 
 </div>
 
+<!-- IMAGE MODAL -->
+<div id="imageModal" class="image-modal d-none">
+    <div class="image-modal-content">
+        <img id="modalImage">
+    </div>
+</div>
+
 <script>
 
 /* ================= SEARCH FILTER ================= */
@@ -163,33 +176,16 @@ document.getElementById("searchInput")
     });
 });
 
-/* ================= SELECT ALL ================= */
-document.getElementById("selectAll")
-.addEventListener("change", function(){
-    document.querySelectorAll(".recordCheckbox")
-    .forEach(cb => cb.checked = this.checked);
-});
-
-/* ================= BULK DELETE ================= */
-function bulkDelete(){
-
-    const selected = Array.from(
-        document.querySelectorAll(".recordCheckbox:checked")
-    ).map(cb => cb.value);
-
-    if(selected.length === 0){
-        alert("No records selected");
-        return;
-    }
-
-    if(confirm("Delete selected records?")){
-        fetch("/admin/bulk_delete", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ids: selected })
-        }).then(()=> location.reload());
-    }
+/* ================= IMAGE MODAL ================= */
+function openImage(src){
+    document.getElementById("modalImage").src = src;
+    document.getElementById("imageModal").classList.remove("d-none");
 }
+
+document.getElementById("imageModal")
+.addEventListener("click", function(){
+    this.classList.add("d-none");
+});
 
 /* ================= DAILY CHART ================= */
 fetch("/stats/daily")

@@ -12,6 +12,7 @@ from PIL import Image
 import time
 
 
+
 # System metrics
 camera_status = "OFF"
 fps_value = 0
@@ -45,6 +46,11 @@ prev_face_x = None
 camera = None
 camera_enabled = False
 attendance_status = ""
+attendance_mode = "checkin"   # default mode
+last_attendance_time = 0
+ATTENDANCE_COOLDOWN = 3  # seconds
+
+
 
 
 
@@ -75,70 +81,100 @@ def get_db():
     return sqlite3.connect("database/attendance.db")
 
 # ------------------ Attendance Logic ------------------
-def mark_attendance(user_id):
+def mark_attendance(user_id, frame):
     global attendance_mode
 
     now = datetime.datetime.now()
     today = now.strftime("%Y-%m-%d")
     day = now.strftime("%A")
-    time_now = now.strftime("%H:%M:%S")
+    time_now_file = now.strftime("%H-%M-%S")   # for filename
+    time_now_db = now.strftime("%H:%M:%S")     # for database
 
     db = get_db()
     cur = db.cursor()
 
-    # Get today's record
-    cur.execute("""
-        SELECT checkin_time, checkout_time
-        FROM attendance
-        WHERE emp_id=? AND date=?
-    """, (user_id, today))
+    # Ensure image folder exists
+    os.makedirs("static/attendance_images", exist_ok=True)
 
-    record = cur.fetchone()
-
-    # -------------------------
-    # CHECK-IN MODE
-    # -------------------------
+    # =====================================================
+    # -------------------- CHECK-IN ------------------------
+    # =====================================================
     if attendance_mode == "checkin":
 
-        if record is None:
-            cur.execute("""
-                INSERT INTO attendance (emp_id, date, day, checkin_time)
-                VALUES (?, ?, ?, ?)
-            """, (user_id, today, day, time_now))
+        # Check if there is already an open session
+        cur.execute("""
+            SELECT id FROM attendance
+            WHERE emp_id=? AND date=? AND checkout_time IS NULL
+            ORDER BY id DESC LIMIT 1
+        """, (user_id, today))
 
-            db.commit()
+        open_session = cur.fetchone()
+
+        if open_session:
             db.close()
-            return "checkin_success"
+            return "already_checked_in"
 
+        # Save check-in image
+        filename = f"checkin_{user_id}_{today}_{time_now_file}.jpg"
+        full_path = os.path.join("static/attendance_images", filename)
+        cv2.imwrite(full_path, frame)
+
+        db_path = f"attendance_images/{filename}"
+
+        # Insert new session
+        cur.execute("""
+            INSERT INTO attendance 
+            (emp_id, date, day, checkin_time, status, checkin_image)
+            VALUES (?, ?, ?, ?, 'Present', ?)
+        """, (user_id, today, day, time_now_db, db_path))
+
+        db.commit()
         db.close()
-        return "already_checked_in"
+        return "checkin_success"
 
-    # -------------------------
-    # CHECK-OUT MODE
-    # -------------------------
+    # =====================================================
+    # -------------------- CHECK-OUT -----------------------
+    # =====================================================
     elif attendance_mode == "checkout":
 
-        if record and record[1] is None:
+        # Get latest open session
+        cur.execute("""
+            SELECT id, checkin_time
+            FROM attendance
+            WHERE emp_id=? AND date=? AND checkout_time IS NULL
+            ORDER BY id DESC LIMIT 1
+        """, (user_id, today))
 
-            login_dt = datetime.datetime.strptime(record[0], "%H:%M:%S")
-            logout_dt = datetime.datetime.strptime(time_now, "%H:%M:%S")
+        open_session = cur.fetchone()
 
-            worked_hours = (logout_dt - login_dt).total_seconds() / 3600
-
-            cur.execute("""
-                UPDATE attendance
-                SET checkout_time=?, worked_hours=?
-                WHERE emp_id=? AND date=?
-            """, (time_now, worked_hours, user_id, today))
-
-            db.commit()
+        if not open_session:
             db.close()
-            return f"checkout_success_{round(worked_hours,2)}"
+            return "already_checked_out"
 
+        record_id, checkin_time = open_session
+
+        login_time = datetime.datetime.strptime(checkin_time, "%H:%M:%S")
+        logout_time = datetime.datetime.strptime(time_now_db, "%H:%M:%S")
+
+        worked_hours = (logout_time - login_time).total_seconds() / 3600
+
+        # Save checkout image
+        filename = f"checkout_{user_id}_{today}_{time_now_file}.jpg"
+        full_path = os.path.join("static/attendance_images", filename)
+        cv2.imwrite(full_path, frame)
+
+        db_path = f"attendance_images/{filename}"
+
+        # Update that session
+        cur.execute("""
+            UPDATE attendance
+            SET checkout_time=?, worked_hours=?, checkout_image=?
+            WHERE id=?
+        """, (time_now_db, worked_hours, db_path, record_id))
+
+        db.commit()
         db.close()
-        return "already_checked_out"
-
-
+        return f"checkout_success_{round(worked_hours,2)}"
 
 def get_attendance_stats():
     db = get_db()
@@ -164,18 +200,24 @@ def get_attendance_stats():
 
 # ------------------ Video Streaming ------------------
 def generate_frames():
-    global attendance_status, success_recognition, failed_recognition, camera
+    global attendance_status
+    global success_recognition
+    global failed_recognition
+    global camera
+    global last_attendance_time
 
-    camera = cv2.VideoCapture(CAMERA_INDEX)
+    if camera is None:
+        camera = cv2.VideoCapture(CAMERA_INDEX)
+        camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-    while True:
-
-        if not camera_enabled:
-            break
+    while camera_enabled:
 
         success, frame = camera.read()
         if not success:
             break
+
+        # Mirror camera (front camera style)
+        frame = cv2.flip(frame, 1)
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = face_cascade.detectMultiScale(gray, 1.3, 5)
@@ -183,14 +225,9 @@ def generate_frames():
         status_text = "Detecting Face..."
         status_color = (0, 200, 255)
 
-        if len(faces) > 0:
-            status_text = "Face Detected"
-            status_color = (255, 200, 0)
-
         for (x, y, w, h) in faces:
 
             face_roi = gray[y:y+h, x:x+w]
-
             user_id, conf = recognizer.predict(face_roi)
 
             if conf < THRESHOLD:
@@ -198,32 +235,29 @@ def generate_frames():
                 status_text = "Identity Verified"
                 status_color = (0, 255, 0)
 
-                result = mark_attendance(user_id)
+                current_time = time.time()
 
-                attendance_status = result
-
-                success_recognition += 1
-
-                # Prevent rapid repeated marking
-                import time
-                time.sleep(2)
+                # Cooldown check
+                if current_time - last_attendance_time > ATTENDANCE_COOLDOWN:
+                    result = mark_attendance(user_id, frame)
+                    attendance_status = result
+                    success_recognition += 1
+                    last_attendance_time = current_time
 
             else:
                 status_text = "Unknown Face"
                 status_color = (0, 0, 255)
-
                 failed_recognition += 1
                 attendance_status = "failed"
 
-            # Draw face rectangle
             cv2.rectangle(frame, (x, y), (x+w, y+h), status_color, 2)
 
-        # 🔥 Draw background for status text (OUTSIDE face loop)
-        cv2.rectangle(frame, (10, 10), (700, 80), (0, 0, 0), -1)
+        # Status text background
+        cv2.rectangle(frame, (10, 10), (600, 70), (0, 0, 0), -1)
 
         cv2.putText(frame,
                     status_text,
-                    (20, 55),
+                    (20, 45),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     1,
                     status_color,
@@ -235,7 +269,10 @@ def generate_frames():
                b"Content-Type: image/jpeg\r\n\r\n" +
                buffer.tobytes() + b"\r\n")
 
-    camera.release()
+    # Release camera when stopped
+    if camera is not None:
+        camera.release()
+        camera = None
 
 
         
@@ -311,11 +348,16 @@ def attendance():
 
     # Get all attendance records
     rows = db.execute("""
-        SELECT id, emp_id, date, day,
-               checkin_time, checkout_time, worked_hours
-        FROM attendance
-        ORDER BY date DESC
-    """).fetchall()
+    SELECT a.id, a.emp_id, a.date, a.day,
+           a.checkin_time, a.checkout_time,
+           a.worked_hours, a.checkin_image,
+           a.checkout_image
+    FROM attendance a
+    JOIN users u ON a.emp_id = u.id
+    ORDER BY a.date DESC
+""").fetchall()
+
+
 
     # Total registered users
     total_users = db.execute(
@@ -353,6 +395,150 @@ def attendance():
         total_count=total_count,
         today_count=today_count,
         percentage=percentage
+    )
+@app.route("/attendance/analytics")
+def attendance_analytics():
+
+    db = get_db()
+
+    # ---------------------------------------------------
+    # GET ALL VALID SESSIONS (ONLY EXISTING USERS)
+    # ---------------------------------------------------
+    rows = db.execute("""
+        SELECT users.name,
+               attendance.emp_id,
+               attendance.date,
+               attendance.checkin_time,
+               attendance.checkout_time,
+               attendance.worked_hours
+        FROM attendance
+        INNER JOIN users ON attendance.emp_id = users.id
+        WHERE attendance.checkout_time IS NOT NULL
+        ORDER BY attendance.date DESC, attendance.checkin_time
+    """).fetchall()
+
+    # ---------------------------------------------------
+    # MONTHLY SUMMARY
+    # ---------------------------------------------------
+    monthly_summary = db.execute("""
+        SELECT strftime('%Y-%m', attendance.date) as month,
+               ROUND(SUM(attendance.worked_hours),2)
+        FROM attendance
+        INNER JOIN users ON attendance.emp_id = users.id
+        WHERE attendance.worked_hours IS NOT NULL
+        GROUP BY month
+        ORDER BY month DESC
+    """).fetchall()
+
+    # ---------------------------------------------------
+    # HEATMAP DATA (Daily attendance count)
+    # ---------------------------------------------------
+    heatmap_data = db.execute("""
+        SELECT attendance.date,
+               COUNT(DISTINCT attendance.emp_id)
+        FROM attendance
+        INNER JOIN users ON attendance.emp_id = users.id
+        GROUP BY attendance.date
+        ORDER BY attendance.date DESC
+    """).fetchall()
+
+    # ---------------------------------------------------
+    # LEADERBOARD (Top Employees)
+    # ---------------------------------------------------
+    leaderboard_raw = db.execute("""
+        SELECT users.name,
+               attendance.emp_id,
+               ROUND(SUM(attendance.worked_hours),2) as total_hours
+        FROM attendance
+        INNER JOIN users ON attendance.emp_id = users.id
+        WHERE attendance.worked_hours IS NOT NULL
+        GROUP BY attendance.emp_id
+        ORDER BY total_hours DESC
+    """).fetchall()
+
+    # Add ranking number
+    leaderboard = []
+    rank = 1
+    for name, emp_id, total in leaderboard_raw:
+        leaderboard.append({
+            "rank": rank,
+            "name": name,
+            "emp_id": emp_id,
+            "total_hours": total
+        })
+        rank += 1
+
+    # ---------------------------------------------------
+    # DAILY TOTAL + OVERTIME + PERFORMANCE
+    # ---------------------------------------------------
+    daily_data = {}
+
+    for name, emp_id, date, checkin, checkout, worked in rows:
+
+        if worked is None:
+            continue
+
+        key = (emp_id, date)
+
+        if key not in daily_data:
+            daily_data[key] = {
+                "name": name,
+                "emp_id": emp_id,
+                "date": date,
+                "total_hours": 0,
+                "sessions": []
+            }
+
+        daily_data[key]["total_hours"] += worked
+        daily_data[key]["sessions"].append({
+            "checkin": checkin,
+            "checkout": checkout,
+            "hours": round(worked, 2)
+        })
+
+    HOURLY_RATE = 200  # change if needed
+
+    for key in daily_data:
+
+        total = daily_data[key]["total_hours"]
+        overtime = max(0, total - 8)
+        overtime_salary = overtime * HOURLY_RATE * 1.5
+
+        # AI Productivity Prediction Logic
+        if total >= 9:
+            score = "Excellent ⭐⭐⭐"
+            prediction = "Highly Productive"
+        elif total >= 8:
+            score = "Good ⭐⭐"
+            prediction = "Consistent Performer"
+        elif total >= 6:
+            score = "Average ⭐"
+            prediction = "Moderate Productivity"
+        else:
+            score = "Low ⚠"
+            prediction = "Needs Improvement"
+
+        daily_data[key]["total_hours"] = round(total, 2)
+        daily_data[key]["overtime"] = round(overtime, 2)
+        daily_data[key]["overtime_salary"] = round(overtime_salary, 2)
+        daily_data[key]["score"] = score
+        daily_data[key]["prediction"] = prediction
+
+    db.close()
+
+    # Convert to sorted list (latest first)
+    analytics_data = sorted(
+        daily_data.values(),
+        key=lambda x: x["date"],
+        reverse=True
+    )
+
+    return render_template(
+        "attendance_analytics.html",
+        data=analytics_data,
+        monthly_summary=monthly_summary,
+        heatmap_data=heatmap_data,
+        leaderboard=leaderboard
     )
 
 
@@ -415,13 +601,15 @@ def enroll():
 
 @app.route("/capture/<int:user_id>")
 def capture_faces(user_id):
+
     cam = cv2.VideoCapture(0)
     face_detector = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
 
     count = 0
     os.makedirs("TrainingImage", exist_ok=True)
 
-    while True:
+    while count < 20:   # reduced from 50
+
         ret, img = cam.read()
         if not ret:
             break
@@ -431,24 +619,16 @@ def capture_faces(user_id):
 
         for (x, y, w, h) in faces:
             count += 1
+
             cv2.imwrite(
                 f"TrainingImage/User.{user_id}.{count}.jpg",
                 gray[y:y+h, x:x+w]
             )
 
-            cv2.rectangle(img, (x,y), (x+w,y+h), (0,255,0), 2)
-
-        cv2.imshow("Enrollment - Press Q to stop", img)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-        elif count >= 50:
-            break
-
     cam.release()
-    cv2.destroyAllWindows()
 
     return jsonify({"status": "captured"})
+
 
 
 @app.route("/train")
@@ -648,17 +828,35 @@ def camera_off():
 @app.route("/train_and_test")
 def train_and_test():
     try:
+        # ✅ Ensure training images exist
+        if not os.path.exists("TrainingImage"):
+            return jsonify({"status": "fail", "error": "No training images found"})
+
+        images = [
+            f for f in os.listdir("TrainingImage")
+            if f.endswith(".jpg")
+        ]
+
+        if len(images) == 0:
+            return jsonify({"status": "fail", "error": "No face images available"})
+
+        # ✅ Train model
         train_model()
 
-        # simple test: check if model file exists
-        if os.path.exists("TrainingImageLabel/Trainner.yml"):
+        # ✅ Verify model file saved (faster than reloading)
+        model_path = "TrainingImageLabel/Trainner.yml"
+
+        if os.path.exists(model_path):
             return jsonify({"status": "success"})
         else:
-            return jsonify({"status": "fail"})
+            return jsonify({"status": "fail", "error": "Model not saved"})
 
     except Exception as e:
-        return jsonify({"status": "fail", "error": str(e)})
-    
+        return jsonify({
+            "status": "fail",
+            "error": str(e)
+        })
+
 @app.route("/train_test_progress")
 def train_test_progress():
     try:
@@ -666,8 +864,10 @@ def train_test_progress():
         train_model()
 
         # STEP 2: Simple test (load model)
-        test_recognizer = cv2.face.LBPHFaceRecognizer_create()
-        test_recognizer.read("TrainingImageLabel/Trainner.yml")
+        # Just confirm file exists
+        if not os.path.exists("TrainingImageLabel/Trainner.yml"):
+            raise Exception("Model not saved")
+
 
         return jsonify({"status": "success"})
 
@@ -786,18 +986,7 @@ def confidence_distribution():
         "labels": labels,
         "values": values
     })
-@app.route("/admin/delete_attendance/<int:record_id>")
-def delete_attendance(record_id):
 
-    if not session.get("admin"):
-        return redirect("/login")
-
-    db = get_db()
-    db.execute("DELETE FROM attendance WHERE id = ?", (record_id,))
-    db.commit()
-    db.close()
-
-    return redirect("/attendance")
 @app.route("/admin/delete_employee_attendance/<emp_id>")
 def delete_employee_attendance(emp_id):
 
@@ -810,35 +999,7 @@ def delete_employee_attendance(emp_id):
     db.close()
 
     return redirect("/attendance")
-@app.route("/admin/edit_attendance/<int:record_id>", methods=["POST"])
-def edit_attendance(record_id):
 
-    checkin = request.form.get("checkin_time")
-    checkout = request.form.get("checkout_time")
-
-    db = get_db()
-    db.execute("""
-        UPDATE attendance
-        SET checkin_time=?, checkout_time=?
-        WHERE id=?
-    """, (checkin, checkout, record_id))
-
-    db.commit()
-    db.close()
-
-    return redirect("/attendance")
-@app.route("/admin/bulk_delete", methods=["POST"])
-def bulk_delete():
-
-    ids = request.json.get("ids")
-
-    db = get_db()
-    for rid in ids:
-        db.execute("DELETE FROM attendance WHERE id=?", (rid,))
-    db.commit()
-    db.close()
-
-    return jsonify({"status": "success"})
 
 @app.route("/admin/manual_attendance", methods=["POST"])
 def manual_attendance():
@@ -963,6 +1124,59 @@ def copilot_api():
         reply = "You can enroll new users from the Enroll page."
 
     return jsonify({"reply": reply})
+
+@app.route("/admin/users")
+def admin_users():
+
+    if not session.get("admin"):
+        return redirect(url_for("login"))
+
+    db = get_db()
+    users = db.execute("""
+        SELECT id, name, role
+        FROM users
+        ORDER BY id
+    """).fetchall()
+    db.close()
+
+    return render_template("admin_users.html", users=users)
+@app.route("/admin/edit_user/<int:user_id>", methods=["POST"])
+def edit_user(user_id):
+
+    if not session.get("admin"):
+        return redirect(url_for("login"))
+
+    name = request.form.get("name")
+    role = request.form.get("role")
+
+    db = get_db()
+    db.execute("""
+        UPDATE users
+        SET name=?, role=?
+        WHERE id=?
+    """, (name, role, user_id))
+    db.commit()
+    db.close()
+
+    return redirect("/admin/users")
+@app.route("/admin/delete_user/<int:user_id>")
+def delete_user(user_id):
+
+    if not session.get("admin"):
+        return redirect(url_for("login"))
+
+    db = get_db()
+
+    # Delete attendance first
+    db.execute("DELETE FROM attendance WHERE emp_id=?", (user_id,))
+
+    # Delete user
+    db.execute("DELETE FROM users WHERE id=?", (user_id,))
+
+    db.commit()
+    db.close()
+
+    return redirect("/admin/users")
 
 
 
