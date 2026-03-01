@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="container mt-5">
+
+    <!-- HEADER -->
+    <div class="text-center mb-5">
+        <h1 class="fw-bold">Faculty Attendance</h1>
+        <p class="text-muted">Professors / Mentors Attendance Dashboard</p>
+    </div>
+
+    <!-- SUMMARY CARDS -->
+    <div class="row text-center mb-5 g-4">
+
+        <div class="col-md-3">
+            <div class="summary-box">
+                <h6>Total Users</h6>
+                <h2>{{ total_users }}</h2>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="summary-box">
+                <h6>Today's Attendance</h6>
+                <h2>{{ today_count }}</h2>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="summary-box">
+                <h6>Total Sessions</h6>
+                <h2>{{ total_count }}</h2>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="summary-box">
+                <h6>Attendance %</h6>
+                <h2>{{ percentage }}%</h2>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- HISTORY HEADER -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="fw-semibold mb-0">Attendance History</h4>
+
+        <div class="d-flex gap-2">
+
+            <input type="text"
+                   id="searchInput"
+                   class="form-control"
+                   placeholder="Search By ID or Name"
+                   style="max-width:200px;">
+
+            <input type="date"
+                   id="dateFilter"
+                   class="form-control"
+                   style="max-width:200px;">
+
+            <a href="/download/pdf" class="btn btn-primary">
+                Download Report
+            </a>
+
+        </div>
+    </div>
+
+    <div class="divider mb-4"></div>
+
+    <!-- TABLE -->
+    <div class="table-responsive mb-5">
+        <table class="table modern-table align-middle">
+            <thead>
+                <tr>
+                    <th>Faculty ID</th>
+                    <th>Name</th>
+                    <th>Date</th>
+                    <th>Day</th>
+                    <th>Check-In</th>
+                    <th>Check-Out</th>
+                    <th>Worked Hours</th>
+                    <th>Check-In Photo</th>
+                    <th>Check-Out Photo</th>
+                </tr>
+            </thead>
+
+            <tbody id="attendanceTable">
+
+            {% for row in rows %}
+                <tr>
+                    <td>{{ row[1] }}</td>  <!-- Faculty ID -->
+                    <td>{{ row[2] }}</td>  <!-- Faculty Name -->
+                    <td>{{ row[3] }}</td>  <!-- Date -->
+                    <td>{{ row[4] }}</td>  <!-- Day -->
+
+                    <td>{{ row[5] if row[5] else '-' }}</td>
+                    <td>{{ row[6] if row[6] else '-' }}</td>
+
+                    <td>
+                        {% if row[7] %}
+                            <span class="badge bg-success">
+                                {{ "%.2f"|format(row[7]) }} hrs
+                            </span>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+
+                    <!-- Check-In Image -->
+                    <td>
+                        {% if row[8] %}
+                            <img src="{{ url_for('static', filename=row[8]) }}"
+                                 style="width:80px; height:100px; object-fit:cover; border-radius:8px;"
+                                 onclick="openImage(this.src)">
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+
+                    <!-- Check-Out Image -->
+                    <td>
+                        {% if row[9] %}
+                            <img src="{{ url_for('static', filename=row[9]) }}"
+                                 style="width:80px; height:100px; object-fit:cover; border-radius:8px;"
+                                 onclick="openImage(this.src)">
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+
+            </tbody>
+        </table>
+    </div>
+
+    <!-- CHARTS -->
+    <div class="row mt-5 g-4">
+
+        <div class="col-md-6">
+            <div class="chart-box p-4">
+                <h5 class="text-center mb-3">Daily Attendance Trend</h5>
+                <canvas id="dailyChart"></canvas>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="chart-box p-4">
+                <h5 class="text-center mb-3">Recognition Performance</h5>
+                <canvas id="perfChart"></canvas>
+            </div>
+        </div>
+
+    </div>
+
+</div>
+
+<!-- IMAGE MODAL -->
+<div id="imageModal" class="image-modal d-none">
+    <div class="image-modal-content">
+        <img id="modalImage">
+    </div>
+</div>
+
+<script>
+
+/* ================= SEARCH FILTER ================= */
+document.getElementById("searchInput")
+.addEventListener("keyup", function() {
+    const value = this.value.toLowerCase();
+    document.querySelectorAll("#attendanceTable tr").forEach(row => {
+        row.style.display = row.innerText.toLowerCase().includes(value)
+            ? ""
+            : "none";
+    });
+});
+
+/* ================= IMAGE MODAL ================= */
+function openImage(src){
+    document.getElementById("modalImage").src = src;
+    document.getElementById("imageModal").classList.remove("d-none");
+}
+
+document.getElementById("imageModal")
+.addEventListener("click", function(){
+    this.classList.add("d-none");
+});
+
+/* ================= DAILY CHART ================= */
+fetch("/stats/daily")
+.then(r => r.json())
+.then(data => {
+    new Chart(document.getElementById("dailyChart"), {
+        type: "line",
+        data: {
+            labels: data.map(d => d[0]),
+            datasets: [{
+                label: "Attendance",
+                data: data.map(d => d[1]),
+                borderWidth: 2,
+                tension: 0.4,
+                fill: false
+            }]
+        }
+    });
+});
+
+/* ================= SUCCESS / FAILURE ================= */
+fetch("/stats/performance")
+.then(r => r.json())
+.then(data => {
+    new Chart(document.getElementById("perfChart"), {
+        type: "bar",
+        data: {
+            labels: ["Success", "Failure"],
+            datasets: [{
+                label: "Recognition Count",
+                data: [data.success, data.failure]
+            }]
+        }
+    });
+});
+
+</script>
+
+{% endblock %}

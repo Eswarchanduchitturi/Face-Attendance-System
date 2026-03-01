@@ -16,13 +16,17 @@
 
                 <input type="number" name="user_id"
                        class="form-control mb-3"
-                       placeholder="Employee ID" required>
+                       placeholder="ID" required>
 
                 <input type="text" name="name"
                        class="form-control mb-3"
                        placeholder="Full Name" required>
-
-                <button class="btn btn-primary w-100">
+                <select name="role" class="form-control mb-3">
+                    <option value="student">Student</option>
+                    <option value="faculty">Faculty</option>
+                </select>
+                
+                <button type="submit" class="btn btn-primary w-100">
                     Start Enrollment
                 </button>
 

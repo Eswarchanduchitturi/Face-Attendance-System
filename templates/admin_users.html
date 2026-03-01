@@ -33,9 +33,13 @@
 
                         <td>
                             <select name="role" class="form-select">
-                                <option value="user"
-                                    {% if user[2]=='user' %}selected{% endif %}>
-                                    User
+                                <option value="student"
+                                    {% if user[2]=='Student' %}selected{% endif %}>
+                                    Student
+                                </option>
+                                <option value="faculty"
+                                    {% if user[2]=='faculty' %}selected{% endif %}>
+                                    Faculty
                                 </option>
                                 <option value="admin"
                                     {% if user[2]=='admin' %}selected{% endif %}>

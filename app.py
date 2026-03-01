@@ -341,59 +341,112 @@ def video():
         mimetype="multipart/x-mixed-replace; boundary=frame"
     )
 
-@app.route("/attendance")
-def attendance():
+# ---------------- STUDENT ATTENDANCE ----------------
+@app.route("/attendance/students")
+def student_attendance():
 
     db = get_db()
 
-    # Get all attendance records
     rows = db.execute("""
-    SELECT a.id, a.emp_id, a.date, a.day,
-           a.checkin_time, a.checkout_time,
-           a.worked_hours, a.checkin_image,
-           a.checkout_image
-    FROM attendance a
-    JOIN users u ON a.emp_id = u.id
-    ORDER BY a.date DESC
-""").fetchall()
+        SELECT attendance.id,
+               users.id,
+               users.name,
+               attendance.date,
+               attendance.day,
+               attendance.checkin_time,
+               attendance.checkout_time,
+               attendance.worked_hours,
+               attendance.checkin_image,
+               attendance.checkout_image
+        FROM attendance
+        INNER JOIN users 
+            ON CAST(attendance.emp_id AS INTEGER) = users.id
+        WHERE users.role = 'student'
+        ORDER BY attendance.date DESC, attendance.checkin_time DESC
+    """).fetchall()
 
+    total_users = db.execute("""
+        SELECT COUNT(*) FROM users WHERE role='student'
+    """).fetchone()[0]
 
-
-    # Total registered users
-    total_users = db.execute(
-        "SELECT COUNT(*) FROM users"
-    ).fetchone()[0]
-
-    # Total attendance sessions
-    total_count = db.execute(
-        "SELECT COUNT(*) FROM attendance"
-    ).fetchone()[0]
-
-    # Today's attendance count
     today = datetime.date.today().isoformat()
 
     today_count = db.execute("""
-        SELECT COUNT(DISTINCT emp_id)
+        SELECT COUNT(DISTINCT attendance.emp_id)
         FROM attendance
-        WHERE date = ?
+        INNER JOIN users 
+            ON CAST(attendance.emp_id AS INTEGER) = users.id
+        WHERE users.role='student' AND attendance.date=?
     """, (today,)).fetchone()[0]
+
+    total_count = len(rows)
+
+    percentage = 0
+    if total_users > 0:
+        percentage = round((today_count / total_users) * 100, 2)
 
     db.close()
 
-    # Calculate percentage
-    percentage = 0
-    if total_users > 0:
-        percentage = round(
-            (today_count / total_users) * 100,
-            2
-        )
-
     return render_template(
-        "attendance.html",
+        "attendance_students.html",
         rows=rows,
         total_users=total_users,
-        total_count=total_count,
         today_count=today_count,
+        total_count=total_count,
+        percentage=percentage
+    )
+# ---------------- FACULTY ATTENDANCE ----------------
+@app.route("/attendance/faculty")
+def faculty_attendance():
+
+    db = get_db()
+
+    rows = db.execute("""
+        SELECT attendance.id,
+               users.id,
+               users.name,
+               attendance.date,
+               attendance.day,
+               attendance.checkin_time,
+               attendance.checkout_time,
+               attendance.worked_hours,
+               attendance.checkin_image,
+               attendance.checkout_image
+        FROM attendance
+        INNER JOIN users 
+            ON CAST(attendance.emp_id AS INTEGER) = users.id
+        WHERE users.role = 'faculty'
+        ORDER BY attendance.date DESC, attendance.checkin_time DESC
+    """).fetchall()
+
+    total_users = db.execute("""
+        SELECT COUNT(*) FROM users WHERE role='faculty'
+    """).fetchone()[0]
+
+    today = datetime.date.today().isoformat()
+
+    today_count = db.execute("""
+        SELECT COUNT(DISTINCT attendance.emp_id)
+        FROM attendance
+        INNER JOIN users 
+            ON CAST(attendance.emp_id AS INTEGER) = users.id
+        WHERE users.role='faculty' AND attendance.date=?
+    """, (today,)).fetchone()[0]
+
+    total_count = len(rows)
+
+    percentage = 0
+    if total_users > 0:
+        percentage = round((today_count / total_users) * 100, 2)
+
+    db.close()
+
+    return render_template(
+        "attendance_faculty.html",
+        rows=rows,
+        total_users=total_users,
+        today_count=today_count,
+        total_count=total_count,
         percentage=percentage
     )
 @app.route("/attendance/analytics")
@@ -987,18 +1040,6 @@ def confidence_distribution():
         "values": values
     })
 
-@app.route("/admin/delete_employee_attendance/<emp_id>")
-def delete_employee_attendance(emp_id):
-
-    if not session.get("admin"):
-        return redirect("/login")
-
-    db = get_db()
-    db.execute("DELETE FROM attendance WHERE emp_id = ?", (emp_id,))
-    db.commit()
-    db.close()
-
-    return redirect("/attendance")
 
 
 @app.route("/admin/manual_attendance", methods=["POST"])
@@ -1162,22 +1203,22 @@ def edit_user(user_id):
 @app.route("/admin/delete_user/<int:user_id>")
 def delete_user(user_id):
 
-    if not session.get("admin"):
-        return redirect(url_for("login"))
-
     db = get_db()
-
-    # Delete attendance first
-    db.execute("DELETE FROM attendance WHERE emp_id=?", (user_id,))
-
-    # Delete user
     db.execute("DELETE FROM users WHERE id=?", (user_id,))
-
+    db.execute("DELETE FROM attendance WHERE emp_id=?", (user_id,))
     db.commit()
     db.close()
 
-    return redirect("/admin/users")
+    # Delete training images
+    folder = "TrainingImage"
+    for file in os.listdir(folder):
+        if file.startswith(f"User.{user_id}."):
+            os.remove(os.path.join(folder, file))
 
+    # Retrain model automatically
+    train_model()
+
+    return redirect("/admin/manage_users")
 
 
 
