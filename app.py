@@ -66,7 +66,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
 # ------------------ Config ------------------
 CAMERA_INDEX = 0
-THRESHOLD = 65          # LBPH threshold (lower = stricter)
+THRESHOLD = 65          # LBPH threshold (lower = stricter) - SET FOR BALANCED ACCURACY
 TOTAL_EMPLOYEES = 10    # change later (will auto-calc with users table)
 
 # ------------------ OpenCV Setup ------------------
@@ -74,34 +74,62 @@ TOTAL_EMPLOYEES = 10    # change later (will auto-calc with users table)
 face_cascade = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
 
 recognizer = cv2.face.LBPHFaceRecognizer_create()
-recognizer.read("TrainingImageLabel/Trainner.yml")
+# Only load model if it exists
+if os.path.exists("TrainingImageLabel/Trainner.yml"):
+    try:
+        recognizer.read("TrainingImageLabel/Trainner.yml")
+        print("✅ Model loaded successfully")
+    except Exception as e:
+        print(f"⚠️  Could not load model: {e}")
+else:
+    print("⚠️  No trained model found. Enroll users to train the model.")
 
 # ------------------ Database ------------------
 def get_db():
     return sqlite3.connect("database/attendance.db")
 
 # ------------------ Attendance Logic ------------------
-def mark_attendance(user_id, frame):
+def mark_attendance(user_id, face_image):
     global attendance_mode
+
+    print(f"\n{'='*60}")
+    print(f"[MARK_ATTENDANCE] Function called with:")
+    print(f"  user_id parameter: {user_id} (type: {type(user_id)})")
+    print(f"  attendance_mode: {attendance_mode}")
+    print(f"{'='*60}")
 
     now = datetime.datetime.now()
     today = now.strftime("%Y-%m-%d")
     day = now.strftime("%A")
-    time_now_file = now.strftime("%H-%M-%S")   # for filename
-    time_now_db = now.strftime("%H:%M:%S")     # for database
+    time_now_file = now.strftime("%H-%M-%S")
+    time_now_db = now.strftime("%H:%M:%S")
 
     db = get_db()
     cur = db.cursor()
 
-    # Ensure image folder exists
+    # CRITICAL FIX: VALIDATE USER EXISTS
+    user_check = cur.execute("""
+        SELECT id, name FROM users WHERE id = ?
+    """, (user_id,)).fetchone()
+    
+    if not user_check:
+        db.close()
+        print(f"❌ [ERROR] Recognized user_id {user_id} does NOT exist in database!")
+        print(f"   Valid user IDs in DB:")
+        db = get_db()
+        valid_ids = db.execute("SELECT id, name FROM users").fetchall()
+        for vid, vname in valid_ids:
+            print(f"      - ID {vid}: {vname}")
+        db.close()
+        return f"invalid_user_{user_id}"
+    
+    user_name = user_check[1]
+    print(f"✅ User validation successful: ID={user_id}, Name={user_name}")
+
     os.makedirs("static/attendance_images", exist_ok=True)
 
-    # =====================================================
-    # -------------------- CHECK-IN ------------------------
-    # =====================================================
+    # CHECK-IN
     if attendance_mode == "checkin":
-
-        # Check if there is already an open session
         cur.execute("""
             SELECT id FROM attendance
             WHERE emp_id=? AND date=? AND checkout_time IS NULL
@@ -112,16 +140,14 @@ def mark_attendance(user_id, frame):
 
         if open_session:
             db.close()
+            print(f"⚠️  User {user_id} already checked in today")
             return "already_checked_in"
 
-        # Save check-in image
         filename = f"checkin_{user_id}_{today}_{time_now_file}.jpg"
         full_path = os.path.join("static/attendance_images", filename)
-        cv2.imwrite(full_path, frame)
-
+        cv2.imwrite(full_path, face_image)
         db_path = f"attendance_images/{filename}"
 
-        # Insert new session
         cur.execute("""
             INSERT INTO attendance 
             (emp_id, date, day, checkin_time, status, checkin_image)
@@ -130,14 +156,12 @@ def mark_attendance(user_id, frame):
 
         db.commit()
         db.close()
-        return "checkin_success"
+        print(f"✅ Check-in recorded for User {user_id} ({user_name})")
+        print(f"   Date: {today}, Time: {time_now_db}")
+        return f"checkin_success_{user_name}"
 
-    # =====================================================
-    # -------------------- CHECK-OUT -----------------------
-    # =====================================================
+    # CHECK-OUT
     elif attendance_mode == "checkout":
-
-        # Get latest open session
         cur.execute("""
             SELECT id, checkin_time
             FROM attendance
@@ -149,23 +173,19 @@ def mark_attendance(user_id, frame):
 
         if not open_session:
             db.close()
+            print(f"⚠️  No open session for User {user_id} today")
             return "already_checked_out"
 
         record_id, checkin_time = open_session
-
         login_time = datetime.datetime.strptime(checkin_time, "%H:%M:%S")
         logout_time = datetime.datetime.strptime(time_now_db, "%H:%M:%S")
-
         worked_hours = (logout_time - login_time).total_seconds() / 3600
 
-        # Save checkout image
         filename = f"checkout_{user_id}_{today}_{time_now_file}.jpg"
         full_path = os.path.join("static/attendance_images", filename)
-        cv2.imwrite(full_path, frame)
-
+        cv2.imwrite(full_path, face_image)
         db_path = f"attendance_images/{filename}"
 
-        # Update that session
         cur.execute("""
             UPDATE attendance
             SET checkout_time=?, worked_hours=?, checkout_image=?
@@ -174,7 +194,13 @@ def mark_attendance(user_id, frame):
 
         db.commit()
         db.close()
-        return f"checkout_success_{round(worked_hours,2)}"
+        print(f"✅ Check-out recorded for User {user_id} ({user_name})")
+        print(f"   Date: {today}, Time: {time_now_db}, Worked: {worked_hours:.2f} hrs")
+        return f"checkout_success_{user_name}"
+    
+    db.close()
+    return "error_invalid_mode"
+
 
 def get_attendance_stats():
     db = get_db()
@@ -224,33 +250,100 @@ def generate_frames():
 
         status_text = "Detecting Face..."
         status_color = (0, 200, 255)
+        user_name = ""
+
+        recognized_faces = []
 
         for (x, y, w, h) in faces:
-
             face_roi = gray[y:y+h, x:x+w]
-            user_id, conf = recognizer.predict(face_roi)
+            
+            # Force reload recognizer to get latest trained model
+            model_loaded = False
+            try:
+                if os.path.exists("TrainingImageLabel/Trainner.yml"):
+                    recognizer.read("TrainingImageLabel/Trainner.yml")
+                    model_loaded = True
+            except Exception as e:
+                print(f"Warning: Could not reload recognizer model: {e}")
+            
+            # Skip prediction if model not available
+            if not model_loaded:
+                box_color = (0, 140, 255)
+                label = "No Model - Enroll Users First"
+                cv2.rectangle(frame, (x, y), (x+w, y+h), box_color, 2)
+                cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, box_color, 2)
+                continue
+            
+            # CRITICAL: Resize face to match training image dimensions (200x200)
+            face_roi_resized = cv2.resize(face_roi, (200, 200))
+            
+            user_id, conf = recognizer.predict(face_roi_resized)
+            print(f"[RECOGNITION] Predicted user_id: {user_id}, confidence: {conf:.2f}")
+
+            box_color = (0, 0, 255)
+            label = f"Unknown ({conf:.1f})"
 
             if conf < THRESHOLD:
+                db = get_db()
+                user_check = db.execute("""
+                    SELECT id, name FROM users WHERE id = ?
+                """, (user_id,)).fetchone()
+                db.close()
 
-                status_text = "Identity Verified"
-                status_color = (0, 255, 0)
+                if user_check:
+                    detected_id = user_check[0]
+                    detected_name = user_check[1]
+                    box_color = (0, 255, 0)
+                    label = f"ID: {detected_id} - {detected_name} ({conf:.1f})"
+                    print(f"[MATCH] User {detected_id} ({detected_name}) matched with confidence {conf:.2f}")
 
-                current_time = time.time()
+                    face_image = frame[y:y+h, x:x+w].copy()
+                    recognized_faces.append({
+                        "user_id": user_id,
+                        "user_name": detected_name,
+                        "conf": conf,
+                        "face_image": face_image
+                    })
+                else:
+                    label = f"Invalid ID {user_id} ({conf:.1f})"
 
-                # Cooldown check
-                if current_time - last_attendance_time > ATTENDANCE_COOLDOWN:
-                    result = mark_attendance(user_id, frame)
-                    attendance_status = result
-                    success_recognition += 1
-                    last_attendance_time = current_time
+            cv2.rectangle(frame, (x, y), (x+w, y+h), box_color, 2)
+            cv2.putText(frame,
+                        label,
+                        (x, y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        box_color,
+                        2)
 
-            else:
-                status_text = "Unknown Face"
-                status_color = (0, 0, 255)
-                failed_recognition += 1
-                attendance_status = "failed"
+        if len(recognized_faces) == 1:
+            best_match = recognized_faces[0]
+            user_name = best_match["user_name"]
+            status_text = f"Welcome {user_name}!"
+            status_color = (0, 255, 0)
+            
+            print(f"\n[ATTENDANCE_RECORD] Best face match detected:")
+            print(f"  User ID: {best_match['user_id']}")
+            print(f"  User Name: {user_name}")
+            print(f"  Confidence: {best_match['conf']:.2f}")
+            print(f"  THRESHOLD: {THRESHOLD}")
 
-            cv2.rectangle(frame, (x, y), (x+w, y+h), status_color, 2)
+            current_time = time.time()
+            if current_time - last_attendance_time > ATTENDANCE_COOLDOWN:
+                result = mark_attendance(best_match["user_id"], best_match["face_image"])
+                print(f"  Attendance recording result: {result}")
+                attendance_status = result
+                success_recognition += 1
+                last_attendance_time = current_time
+        elif len(recognized_faces) > 1:
+            status_text = "Multiple recognized faces - show one face only"
+            status_color = (0, 140, 255)
+            attendance_status = "multiple_faces"
+        elif len(faces) > 0:
+            status_text = "Face not recognized"
+            status_color = (0, 0, 255)
+            attendance_status = "failed"
+            failed_recognition += 1
 
         # Status text background
         cv2.rectangle(frame, (10, 10), (600, 70), (0, 0, 0), -1)
@@ -277,29 +370,86 @@ def generate_frames():
 
         
 def train_model():
+    """Train face recognition model - uses pre-detected face ROIs with consistent sizing"""
     recognizer = cv2.face.LBPHFaceRecognizer_create()
-    detector = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
+    
+    # CRITICAL: All images must be resized to same dimensions for LBPH training
+    FACE_WIDTH = 200
+    FACE_HEIGHT = 200
 
     faces = []
     ids = []
 
-    image_paths = [os.path.join("TrainingImage", f)
-                   for f in os.listdir("TrainingImage")]
+    if not os.path.exists("TrainingImage"):
+        os.makedirs("TrainingImage")
+        print("ERROR: TrainingImage folder was empty. Please enroll users first.")
+        return False
+
+    image_files = [f for f in os.listdir("TrainingImage") if f.endswith(".jpg")]
+    if len(image_files) == 0:
+        print("ERROR: No training images found. Please enroll users first.")
+        return False
+
+    print(f"[TRAINING] Processing {len(image_files)} images...")
+
+    db = get_db()
+    valid_user_ids = set(row[0] for row in db.execute("SELECT id FROM users").fetchall())
+    db.close()
+
+    image_paths = [os.path.join("TrainingImage", f) for f in image_files]
+    user_face_count = {}
 
     for image_path in image_paths:
-        gray_img = Image.open(image_path).convert("L")
-        img_np = np.array(gray_img, "uint8")
+        try:
+            # Load image as grayscale
+            gray_img = Image.open(image_path).convert("L")
+            img_np = np.array(gray_img, "uint8")
 
-        user_id = int(os.path.split(image_path)[-1].split(".")[1])
-        faces_detected = detector.detectMultiScale(img_np)
+            # Verify minimal size
+            if img_np.size < 100:
+                continue
 
-        for (x, y, w, h) in faces_detected:
-            faces.append(img_np[y:y+h, x:x+w])
+            filename = os.path.split(image_path)[-1]
+            parts = filename.split(".")
+            if len(parts) < 4 or parts[0] != "User":
+                continue
+
+            try:
+                user_id = int(parts[1])
+            except ValueError:
+                continue
+
+            if user_id not in valid_user_ids:
+                continue
+
+            # CRITICAL: Resize to standard dimensions
+            resized_img = cv2.resize(img_np, (FACE_WIDTH, FACE_HEIGHT))
+            
+            faces.append(resized_img)
             ids.append(user_id)
+            
+            user_face_count[user_id] = user_face_count.get(user_id, 0) + 1
+                
+        except Exception:
+            continue
 
-    recognizer.train(faces, np.array(ids))
-    os.makedirs("TrainingImageLabel", exist_ok=True)
-    recognizer.save("TrainingImageLabel/Trainner.yml")
+    if len(faces) == 0:
+        print(f"❌ ERROR: No valid faces found for training!")
+        return False
+
+    print(f"[TRAINING] Training model with {len(faces)} samples from {len(user_face_count)} users...")
+
+    try:
+        recognizer.train(faces, np.array(ids, dtype=np.int32))
+        
+        os.makedirs("TrainingImageLabel", exist_ok=True)
+        recognizer.save("TrainingImageLabel/Trainner.yml")
+        
+        print(f"✅ Training complete!")
+        return True
+    except Exception as e:
+        print(f"❌ Training error: {str(e)}")
+        return False
 
 def eye_aspect_ratio(landmarks, left_eye, right_eye):
     def distance(p1, p2):
@@ -341,114 +491,72 @@ def video():
         mimetype="multipart/x-mixed-replace; boundary=frame"
     )
 
-# ---------------- STUDENT ATTENDANCE ----------------
+# ---------------- COMBINED ATTENDANCE ----------------
+@app.route("/attendance")
+def attendance():
+
+    db = get_db()
+
+    # Fetch all attendance records with user role
+    rows = db.execute("""
+        SELECT attendance.id,
+               users.id,
+               users.name,
+               attendance.date,
+               attendance.day,
+               attendance.checkin_time,
+               attendance.checkout_time,
+               attendance.worked_hours,
+               attendance.checkin_image,
+               attendance.checkout_image,
+               users.role
+        FROM attendance
+        INNER JOIN users 
+            ON CAST(attendance.emp_id AS INTEGER) = users.id
+        ORDER BY attendance.date DESC, attendance.checkin_time DESC
+    """).fetchall()
+
+    # Total users (all roles)
+    total_users = db.execute("""
+        SELECT COUNT(*) FROM users
+    """).fetchone()[0]
+
+    today = datetime.date.today().isoformat()
+
+    # Today's attendance count (all roles)
+    today_count = db.execute("""
+        SELECT COUNT(DISTINCT attendance.emp_id)
+        FROM attendance
+        INNER JOIN users 
+            ON CAST(attendance.emp_id AS INTEGER) = users.id
+        WHERE attendance.date=?
+    """, (today,)).fetchone()[0]
+
+    total_count = len(rows)
+
+    percentage = 0
+    if total_users > 0:
+        percentage = round((today_count / total_users) * 100, 2)
+
+    db.close()
+
+    return render_template(
+        "attendance.html",
+        rows=rows,
+        total_users=total_users,
+        today_count=today_count,
+        total_count=total_count,
+        percentage=percentage
+    )
+
+# ---------------- REDIRECTS FOR OLD ROUTES ----------------
 @app.route("/attendance/students")
 def student_attendance():
+    return redirect("/attendance")
 
-    db = get_db()
-
-    rows = db.execute("""
-        SELECT attendance.id,
-               users.id,
-               users.name,
-               attendance.date,
-               attendance.day,
-               attendance.checkin_time,
-               attendance.checkout_time,
-               attendance.worked_hours,
-               attendance.checkin_image,
-               attendance.checkout_image
-        FROM attendance
-        INNER JOIN users 
-            ON CAST(attendance.emp_id AS INTEGER) = users.id
-        WHERE users.role = 'student'
-        ORDER BY attendance.date DESC, attendance.checkin_time DESC
-    """).fetchall()
-
-    total_users = db.execute("""
-        SELECT COUNT(*) FROM users WHERE role='student'
-    """).fetchone()[0]
-
-    today = datetime.date.today().isoformat()
-
-    today_count = db.execute("""
-        SELECT COUNT(DISTINCT attendance.emp_id)
-        FROM attendance
-        INNER JOIN users 
-            ON CAST(attendance.emp_id AS INTEGER) = users.id
-        WHERE users.role='student' AND attendance.date=?
-    """, (today,)).fetchone()[0]
-
-    total_count = len(rows)
-
-    percentage = 0
-    if total_users > 0:
-        percentage = round((today_count / total_users) * 100, 2)
-
-    db.close()
-
-    return render_template(
-        "attendance_students.html",
-        rows=rows,
-        total_users=total_users,
-        today_count=today_count,
-        total_count=total_count,
-        percentage=percentage
-    )
-# ---------------- FACULTY ATTENDANCE ----------------
 @app.route("/attendance/faculty")
 def faculty_attendance():
-
-    db = get_db()
-
-    rows = db.execute("""
-        SELECT attendance.id,
-               users.id,
-               users.name,
-               attendance.date,
-               attendance.day,
-               attendance.checkin_time,
-               attendance.checkout_time,
-               attendance.worked_hours,
-               attendance.checkin_image,
-               attendance.checkout_image
-        FROM attendance
-        INNER JOIN users 
-            ON CAST(attendance.emp_id AS INTEGER) = users.id
-        WHERE users.role = 'faculty'
-        ORDER BY attendance.date DESC, attendance.checkin_time DESC
-    """).fetchall()
-
-    total_users = db.execute("""
-        SELECT COUNT(*) FROM users WHERE role='faculty'
-    """).fetchone()[0]
-
-    today = datetime.date.today().isoformat()
-
-    today_count = db.execute("""
-        SELECT COUNT(DISTINCT attendance.emp_id)
-        FROM attendance
-        INNER JOIN users 
-            ON CAST(attendance.emp_id AS INTEGER) = users.id
-        WHERE users.role='faculty' AND attendance.date=?
-    """, (today,)).fetchone()[0]
-
-    total_count = len(rows)
-
-    percentage = 0
-    if total_users > 0:
-        percentage = round((today_count / total_users) * 100, 2)
-
-    db.close()
-
-    return render_template(
-        "attendance_faculty.html",
-        rows=rows,
-        total_users=total_users,
-        today_count=today_count,
-        total_count=total_count,
-        percentage=percentage
-    )
+    return redirect("/attendance")
 @app.route("/attendance/analytics")
 def attendance_analytics():
 
@@ -459,6 +567,7 @@ def attendance_analytics():
     # ---------------------------------------------------
     rows = db.execute("""
         SELECT users.name,
+               users.role,
                attendance.emp_id,
                attendance.date,
                attendance.checkin_time,
@@ -526,7 +635,7 @@ def attendance_analytics():
     # ---------------------------------------------------
     daily_data = {}
 
-    for name, emp_id, date, checkin, checkout, worked in rows:
+    for name, role, emp_id, date, checkin, checkout, worked in rows:
 
         if worked is None:
             continue
@@ -536,6 +645,7 @@ def attendance_analytics():
         if key not in daily_data:
             daily_data[key] = {
                 "name": name,
+                "role": role,
                 "emp_id": emp_id,
                 "date": date,
                 "total_hours": 0,
@@ -599,9 +709,16 @@ def attendance_analytics():
 def download_pdf():
     db = get_db()
     rows = db.execute("""
-        SELECT emp_id, date, checkin_time, checkout_time, worked_hours
+        SELECT attendance.emp_id,
+               COALESCE(users.name, 'Unknown'),
+               attendance.date,
+               attendance.checkin_time,
+               attendance.checkout_time,
+               attendance.worked_hours
         FROM attendance
-        ORDER BY date DESC, time DESC
+        LEFT JOIN users
+            ON CAST(attendance.emp_id AS INTEGER) = users.id
+        ORDER BY attendance.date DESC, attendance.checkin_time DESC
     """).fetchall()
     db.close()
 
@@ -612,15 +729,12 @@ def download_pdf():
 
     text.textLine("Attendance Report")
     text.textLine("-------------------------------")
-    text.textLine(
-    f"User ID: {r[0]} | Date: {r[1]} | "
-    f"In: {r[2]} | Out: {r[3]} | "
-    f"Hours: {round(r[4],2) if r[4] else 'N/A'}"
-)
-
-
     for r in rows:
-        text.textLine(f"User ID: {r[0]} | Date: {r[1]} | Time: {r[2]}")
+        text.textLine(
+            f"User ID: {r[0]} | Name: {r[1]} | Date: {r[2]} | "
+            f"In: {r[3] or '-'} | Out: {r[4] or '-'} | "
+            f"Hours: {round(r[5], 2) if r[5] is not None else 'N/A'}"
+        )
 
     pdf.drawText(text)
     pdf.save()
@@ -637,14 +751,30 @@ def enroll():
     if request.method == "POST":
         user_id = request.form["user_id"]
         name = request.form["name"]
-        # Remove email and department if table doesn't have these columns
+        role = request.form.get("role", "student")
         
         db = get_db()
-        # Match the existing table structure (id, name, role)
+        
+        # Check if user already exists
+        existing_user = db.execute("""
+            SELECT id, name FROM users WHERE id = ?
+        """, (user_id,)).fetchone()
+        
+        if existing_user:
+            db.close()
+            return jsonify({"status": "error", "message": f"User ID {user_id} already exists! This user is already enrolled."}), 400
+        
+        # Check if training images already exist for this user
+        training_images = [f for f in os.listdir("TrainingImage") if f.startswith(f"User.{user_id}.")] if os.path.exists("TrainingImage") else []
+        if training_images:
+            db.close()
+            return jsonify({"status": "error", "message": f"Training images already exist for user ID {user_id}. This user cannot be re-enrolled."}), 400
+        
+        # Insert new user
         db.execute("""
-            INSERT OR REPLACE INTO users (id, name, role)
-            VALUES (?, ?, 'user')
-        """, (user_id, name))
+            INSERT INTO users (id, name, role)
+            VALUES (?, ?, ?)
+        """, (user_id, name, role))
         db.commit()
         db.close()
 
@@ -652,41 +782,234 @@ def enroll():
 
     return render_template("enroll.html")
 
+@app.route("/check_user/<int:user_id>")
+def check_user(user_id):
+    """Check if user already exists"""
+    db = get_db()
+    existing_user = db.execute("""
+        SELECT id, name FROM users WHERE id = ?
+    """, (user_id,)).fetchone()
+    db.close()
+    
+    # Check if training images exist
+    training_images = [f for f in os.listdir("TrainingImage") if f.startswith(f"User.{user_id}.")] if os.path.exists("TrainingImage") else []
+    
+    if existing_user or training_images:
+        return jsonify({"exists": True, "user_name": existing_user[1] if existing_user else "Unknown"})
+    else:
+        return jsonify({"exists": False})
+
 @app.route("/capture/<int:user_id>")
 def capture_faces(user_id):
+    global recognizer, camera
 
-    cam = cv2.VideoCapture(0)
+    # Release any existing camera connection
+    if camera is not None:
+        try:
+            camera.release()
+            camera = None
+            time.sleep(0.5)  # Give camera time to release
+        except:
+            pass
+
+    # Try to open camera with retries
+    cam = None
+    for attempt in range(3):
+        cam = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Use DirectShow backend on Windows
+        if cam.isOpened():
+            break
+        time.sleep(0.3)
+    
+    if cam is None or not cam.isOpened():
+        print("❌ ERROR: Could not access camera")
+        return jsonify({"status": "error", "trained": False, "message": "Camera access failed. Close other apps using camera."}), 500
+
+    # Optimize camera settings for faster capture
+    cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cam.set(cv2.CAP_PROP_FPS, 30)
+    cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    
+    # Warm up camera with a few reads
+    for _ in range(5):
+        cam.read()
+
+    # Load face detector and verify it exists
     face_detector = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
+    if face_detector.empty():
+        cam.release()
+        print("❌ ERROR: Haar Cascade file not found or invalid")
+        return jsonify({"status": "error", "trained": False, "message": "Face detection model not found. Check haarcascade file."}), 500
 
     count = 0
+    captured_faces = []
     os.makedirs("TrainingImage", exist_ok=True)
+    
+    TARGET_IMAGES = 12  # Reduced from 20 for speed (still enough for training)
+    max_attempts = 150  # Max 150 frames = 5 seconds at 30fps (gives user time to position face)
+    attempts = 0
+    frame_skip = 0  # Capture every 2nd frame with face for variety
+    no_face_count = 0  # Track frames without face detection
 
-    while count < 20:   # reduced from 50
+    print(f"[ENROLLMENT] Starting capture for user {user_id}...")
+    start_time = time.time()
 
+    while count < TARGET_IMAGES and attempts < max_attempts:
+        attempts += 1
+        
         ret, img = cam.read()
         if not ret:
-            break
+            print(f"[ENROLLMENT] Warning: Failed to read frame {attempts}")
+            continue
 
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        faces = face_detector.detectMultiScale(gray, 1.3, 5)
+        # Reduced minNeighbors from 5 to 3 for easier face detection
+        faces = face_detector.detectMultiScale(gray, 1.3, 3)
 
-        for (x, y, w, h) in faces:
-            count += 1
+        if len(faces) > 0:
+            no_face_count = 0  # Reset no-face counter
+            
+            # Skip some frames for image variety (every 2nd detection)
+            frame_skip += 1
+            if frame_skip % 2 != 0:  # Capture every 2nd face detection
+                continue
+                
+            for (x, y, w, h) in faces:
+                if count >= TARGET_IMAGES:
+                    break
+                    
+                count += 1
+                face_roi = gray[y:y+h, x:x+w]
+                captured_faces.append(face_roi)
 
-            cv2.imwrite(
-                f"TrainingImage/User.{user_id}.{count}.jpg",
-                gray[y:y+h, x:x+w]
-            )
+                # Save the CROPPED FACE ROI directly
+                cv2.imwrite(
+                    f"TrainingImage/User.{user_id}.{count}.jpg",
+                    face_roi
+                )
+                print(f"[ENROLLMENT] Captured image {count}/{TARGET_IMAGES}")
+                break  # Only capture one face per frame
+        else:
+            no_face_count += 1
+            # Log warning if no face detected for extended period
+            if no_face_count % 30 == 0:  # Every 30 frames (~1 second)
+                print(f"[ENROLLMENT] Warning: No face detected for {no_face_count} frames. Please face the camera.")
 
     cam.release()
+    elapsed_time = time.time() - start_time
+    print(f"[ENROLLMENT] Finished: Captured {count}/{TARGET_IMAGES} images in {elapsed_time:.1f}s over {attempts} frames")
+    
+    # Check if we got enough images
+    if count < 8:
+        error_msg = f"Only captured {count}/{TARGET_IMAGES} images. Need at least 8."
+        
+        if count == 0:
+            error_msg += " No face detected. Ensure good lighting, remove glasses/mask, and face the camera directly."
+        elif count < 4:
+            error_msg += " Very few faces detected. Try better lighting and face the camera straight on."
+        else:
+            error_msg += " Please ensure good lighting and stay centered in the frame."
+            
+        print(f"[ENROLLMENT] ❌ {error_msg}")
+        return jsonify({
+            "status": "error", 
+            "trained": False, 
+            "message": error_msg
+        }), 400
 
-    return jsonify({"status": "captured"})
+    # Check if captured face matches any existing user (detect fake IDs)
+    detected_user_id = None
+    detected_user_name = None
+    min_conf = float('inf')
+    
+    try:
+        if os.path.exists("TrainingImageLabel/Trainner.yml"):
+            # Reload latest model before checking
+            recognizer.read("TrainingImageLabel/Trainner.yml")
+            # Check captured faces against trained model
+            for face_roi in captured_faces:
+                # CRITICAL: Resize to match training dimensions
+                face_roi_resized = cv2.resize(face_roi, (200, 200))
+                pred_user_id, conf = recognizer.predict(face_roi_resized)
+                
+                # If confidence is below threshold and it's a different user
+                if conf < THRESHOLD and pred_user_id != user_id:
+                    if conf < min_conf:
+                        min_conf = conf
+                        detected_user_id = pred_user_id
+                        
+                        # Get the detected user's name
+                        db = get_db()
+                        user_info = db.execute("""
+                            SELECT name FROM users WHERE id = ?
+                        """, (pred_user_id,)).fetchone()
+                        db.close()
+                        detected_user_name = user_info[0] if user_info else f"User {pred_user_id}"
+    except Exception as e:
+        print(f"Face matching error: {e}")
+
+    # If a different user's face was detected, return error with warning
+    if detected_user_id:
+        # Delete the wrongly saved images for this fake ID attempt
+        for img_file in os.listdir("TrainingImage"):
+            if img_file.startswith(f"User.{user_id}."):
+                try:
+                    os.remove(f"TrainingImage/{img_file}")
+                except:
+                    pass
+        
+        # Remove the incorrectly enrolled user from database
+        db = get_db()
+        db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        db.commit()
+        db.close()
+        
+        return jsonify({
+            "status": "duplicate_face", 
+            "message": f"⚠️ ALERT: This face is already enrolled! You are already enrolled with ID: {detected_user_id} ({detected_user_name}). You cannot create another account with the same face.",
+            "existing_user_id": detected_user_id,
+            "existing_user_name": detected_user_name
+        }), 400
+
+    # Automatically train the model after capturing images
+    print(f"[TRAINING] Starting training with {count} images...")
+    training_start = time.time()
+    
+    if count == 0:
+        return jsonify({"status": "captured", "trained": False, "message": "No faces detected. Please try again."})
+    
+    success = train_model()
+    
+    if success:
+        total_time = time.time() - start_time
+        print(f"✅ Total enrollment time: {total_time:.1f}s (capture: {elapsed_time:.1f}s, training: {total_time - elapsed_time:.1f}s)")
+        
+        # Reload the recognizer with the newly trained model
+        try:
+            recognizer = cv2.face.LBPHFaceRecognizer_create()
+            recognizer.read("TrainingImageLabel/Trainner.yml")
+            print("✓ Recognizer reloaded")
+        except Exception as e:
+            print(f"Warning: Could not reload recognizer: {e}")
+        return jsonify({
+            "status": "captured", 
+            "trained": True, 
+            "message": f"✅ Enrollment complete! ({count} images, {total_time:.1f}s)"
+        })
+    else:
+        return jsonify({"status": "captured", "trained": False, "message": "Images captured but training failed. Please try again."})
 
 
 
 @app.route("/train")
 def train():
-    train_model()
+    global recognizer
+    success = train_model()
+    if success:
+        # Reload the recognizer with the newly trained model
+        recognizer = cv2.face.LBPHFaceRecognizer_create()
+        recognizer.read("TrainingImageLabel/Trainner.yml")
+        print("✓ Recognizer reloaded with new model")
     return render_template("train.html")
 
 
@@ -942,7 +1265,12 @@ def test_preview():
     result = "No face detected"
 
     for (x,y,w,h) in faces:
-        uid, conf = recognizer.predict(gray[y:y+h, x:x+w])
+        # Reload latest model before recognition
+        if os.path.exists("TrainingImageLabel/Trainner.yml"):
+            recognizer.read("TrainingImageLabel/Trainner.yml")
+        # CRITICAL: Resize face to match training dimensions
+        face_roi_resized = cv2.resize(gray[y:y+h, x:x+w], (200, 200))
+        uid, conf = recognizer.predict(face_roi_resized)
         if conf < THRESHOLD:
             result = f"Recognized: User {uid}"
         else:
@@ -1180,7 +1508,8 @@ def admin_users():
     """).fetchall()
     db.close()
 
-    return render_template("admin_users.html", users=users)
+    msg = request.args.get("msg", "")
+    return render_template("admin_users.html", users=users, msg=msg)
 @app.route("/admin/edit_user/<int:user_id>", methods=["POST"])
 def edit_user(user_id):
 
@@ -1200,28 +1529,319 @@ def edit_user(user_id):
     db.close()
 
     return redirect("/admin/users")
-@app.route("/admin/delete_user/<int:user_id>")
+@app.route("/admin/delete_user/<int:user_id>", methods=["POST"])
 def delete_user(user_id):
 
+    if not session.get("admin"):
+        return redirect(url_for("login"))
+
     db = get_db()
-    db.execute("DELETE FROM users WHERE id=?", (user_id,))
+
+    # Prevent deleting main admin
+    if user_id == 1:
+        db.close()
+        return redirect("/admin/users?msg=protected")
+
+    # Delete attendance
     db.execute("DELETE FROM attendance WHERE emp_id=?", (user_id,))
+
+    # Delete user
+    cur = db.execute("DELETE FROM users WHERE id=?", (user_id,))
+    deleted_rows = cur.rowcount
+
     db.commit()
     db.close()
 
     # Delete training images
+    import os
     folder = "TrainingImage"
-    for file in os.listdir(folder):
-        if file.startswith(f"User.{user_id}."):
-            os.remove(os.path.join(folder, file))
 
-    # Retrain model automatically
-    train_model()
+    if os.path.exists(folder):
+        for file in os.listdir(folder):
+            if file.startswith(f"User.{user_id}."):
+                os.remove(os.path.join(folder, file))
 
-    return redirect("/admin/manage_users")
+    # Retrain model safely
+    if os.path.exists("TrainingImageLabel/Trainner.yml"):
+        try:
+            train_model()
+        except Exception:
+            pass
 
+    if deleted_rows and deleted_rows > 0:
+        return redirect("/admin/users?msg=deleted")
 
+    return redirect("/admin/users?msg=not_found")
 
+# =============== DIAGNOSTIC ENDPOINTS ===============
+@app.route("/debug/training_status")
+def training_status():
+    """Check current training status and model with detailed diagnostics"""
+    try:
+        status = {
+            "training_images": {},
+            "database_users": [],
+            "model_exists": os.path.exists("TrainingImageLabel/Trainner.yml"),
+            "diagnostics": [],
+            "model_info": {}
+        }
+        
+        # Check training images
+        if os.path.exists("TrainingImage"):
+            images = os.listdir("TrainingImage")
+            for img in images:
+                if img.endswith(".jpg"):
+                    parts = img.split(".")
+                    if len(parts) >= 2:
+                        user_id = parts[1]
+                        if user_id not in status["training_images"]:
+                            status["training_images"][user_id] = []
+                        status["training_images"][user_id].append(img)
+            
+            # Convert to count
+            training_counts = {uid: len(images) for uid, images in status["training_images"].items()}
+            status["training_images"] = training_counts
+        
+        # Check database users
+        db = get_db()
+        users = db.execute("SELECT id, name, role FROM users ORDER BY id").fetchall()
+        status["database_users"] = [{"id": u[0], "name": u[1], "role": u[2]} for u in users]
+        db.close()
+        
+        # Validation checks
+        if not status["training_images"]:
+            status["diagnostics"].append("❌ No training images found!")
+        
+        for user_id_str, count in status["training_images"].items():
+            user_id = int(user_id_str)
+            user_exists = any(u["id"] == user_id for u in status["database_users"])
+            
+            if not user_exists:
+                status["diagnostics"].append(f"⚠️  Training images exist for user {user_id} but NOT in database!")
+            elif count < 10:
+                status["diagnostics"].append(f"⚠️  User {user_id} has only {count} training images (need 10+)")
+            else:
+                status["diagnostics"].append(f"✅ User {user_id} has {count} training images")
+        
+        for user in status["database_users"]:
+            user_id_str = str(user["id"])
+            if user_id_str not in status["training_images"]:
+                status["diagnostics"].append(f"❌ User {user['id']} ({user['name']}) in DB but NO training images!")
+        
+        # Check model info if it exists
+        if status["model_exists"]:
+            try:
+                test_recognizer = cv2.face.LBPHFaceRecognizer_create()
+                test_recognizer.read("TrainingImageLabel/Trainner.yml")
+                status["model_info"] = {
+                    "status": "✅ Model file can be loaded",
+                    "file_size": os.path.getsize("TrainingImageLabel/Trainner.yml"),
+                    "last_modified": os.path.getmtime("TrainingImageLabel/Trainner.yml")
+                }
+            except Exception as e:
+                status["model_info"] = {
+                    "status": f"❌ Error loading model: {str(e)}"
+                }
+        
+        return jsonify(status)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/debug/test_model", methods=["POST"])
+def test_model():
+    """Test the trained model against actual training images"""
+    try:
+        if not os.path.exists("TrainingImageLabel/Trainner.yml"):
+            return jsonify({"status": "error", "message": "No model file found. Train the model first."}), 400
+        
+        # Load the recognizer
+        test_recognizer = cv2.face.LBPHFaceRecognizer_create()
+        test_recognizer.read("TrainingImageLabel/Trainner.yml")
+        
+        results = {
+            "status": "ok",
+            "tests": [],
+            "accuracy": 0
+        }
+        
+        if not os.path.exists("TrainingImage"):
+            return jsonify({"status": "error", "message": "No training images found"}), 400
+        
+        all_images = [f for f in os.listdir("TrainingImage") if f.endswith(".jpg")]
+        correct_predictions = 0
+        
+        # Test first 3 images from each user
+        user_images = {}
+        for img in all_images:
+            parts = img.split(".")
+            if len(parts) >= 2:
+                user_id_str = parts[1]
+                if user_id_str not in user_images:
+                    user_images[user_id_str] = []
+                user_images[user_id_str].append(img)
+        
+        for user_id_str in sorted(user_images.keys()):
+            actual_user_id = int(user_id_str)
+            images = user_images[user_id_str][:3]  # Test first 3 images
+            
+            for img_name in images:
+                try:
+                    # Load and prepare image
+                    img_path = os.path.join("TrainingImage", img_name)
+                    gray_img = Image.open(img_path).convert("L")
+                    img_np = np.array(gray_img, "uint8")
+                    img_resized = cv2.resize(img_np, (200, 200))
+                    
+                    # Predict
+                    predicted_id, conf = test_recognizer.predict(img_resized)
+                    
+                    is_correct = (predicted_id == actual_user_id)
+                    if is_correct:
+                        correct_predictions += 1
+                    
+                    results["tests"].append({
+                        "image": img_name,
+                        "actual_user_id": actual_user_id,
+                        "predicted_user_id": predicted_id,
+                        "confidence": round(conf, 2),
+                        "correct": is_correct,
+                        "status": "✅ MATCH" if is_correct else "❌ MISMATCH"
+                    })
+                except Exception as e:
+                    results["tests"].append({
+                        "image": img_name,
+                        "error": str(e)
+                    })
+        
+        if results["tests"]:
+            results["accuracy"] = round((correct_predictions / len(results["tests"])) * 100, 2)
+        
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/debug/retrain", methods=["POST"])
+def retrain_model():
+    """Force retrain the model with maximum diagnostics"""
+    try:
+        # Delete old model to ensure clean training
+        if os.path.exists("TrainingImageLabel/Trainner.yml"):
+            os.remove("TrainingImageLabel/Trainner.yml")
+            print("[RETRAIN] Deleted old model file")
+        
+        print("[RETRAIN] Starting model training from scratch...")
+        result = train_model()
+        
+        if not result:
+            return jsonify({
+                "status": "error", 
+                "message": "❌ Training failed - check Flask console for details"
+            }), 400
+        
+        # Verify model was created
+        if not os.path.exists("TrainingImageLabel/Trainner.yml"):
+            return jsonify({
+                "status": "error",
+                "message": "❌ Model file not created after training"
+            }), 400
+        
+        # Reload the global recognizer
+        global recognizer
+        recognizer = cv2.face.LBPHFaceRecognizer_create()
+        recognizer.read("TrainingImageLabel/Trainner.yml")
+        print("[RETRAIN] ✅ Global recognizer reloaded with new model")
+        
+        return jsonify({
+            "status": "success",
+            "message": "✅ Model retrained and reloaded successfully. Test with /debug/test_model"
+        })
+    except Exception as e:
+        print(f"[ERROR] Retrain failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/debug/attendance_records")
+def debug_attendance_records():
+    """Check all attendance records in database"""
+    try:
+        db = get_db()
+        
+        # Get raw attendance records
+        records = db.execute("""
+            SELECT id, emp_id, date, day, checkin_time, checkout_time, worked_hours
+            FROM attendance
+            ORDER BY id DESC
+            LIMIT 20
+        """).fetchall()
+        
+        # Get user info
+        users = db.execute("SELECT id, name FROM users").fetchall()
+        db.close()
+        
+        user_map = {str(u[0]): u[1] for u in users}
+        
+        result = {
+            "total_records": len(records),
+            "recent_records": [],
+            "user_map": user_map
+        }
+        
+        for rec in records:
+            emp_id_db = rec[1]  # What's stored in database
+            
+            # Try to get user name from database
+            db = get_db()
+            user_name_query = db.execute(
+                "SELECT name FROM users WHERE id = ?",
+                (emp_id_db,)
+            ).fetchone()
+            db.close()
+            
+            user_name_db = user_name_query[0] if user_name_query else "NOT FOUND"
+            
+            result["recent_records"].append({
+                "attendance_id": rec[0],
+                "emp_id_stored": emp_id_db,
+                "user_name_from_db": user_name_db,
+                "date": rec[2],
+                "checkin_time": rec[4],
+                "checkout_time": rec[5],
+                "worked_hours": rec[6]
+            })
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+def clear_all_training():
+    """DANGEROUS: Clear ALL training data and start fresh"""
+    try:
+        import shutil
+        
+        # Delete training images folder
+        if os.path.exists("TrainingImage"):
+            shutil.rmtree("TrainingImage")
+            print("[CLEANUP] Deleted TrainingImage folder")
+        
+        # Delete model folder
+        if os.path.exists("TrainingImageLabel"):
+            shutil.rmtree("TrainingImageLabel")
+            print("[CLEANUP] Deleted TrainingImageLabel folder")
+        
+        # Delete all users from database
+        db = get_db()
+        db.execute("DELETE FROM users")
+        db.execute("DELETE FROM attendance")
+        db.commit()
+        db.close()
+        print("[CLEANUP] Cleared all users and attendance records from database")
+        
+        return jsonify({
+            "status": "success",
+            "message": "✅ All training data, users, and attendance records have been cleared. You can now start fresh with enrollment."
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 # ------------------ Main ------------------
 if __name__ == "__main__":

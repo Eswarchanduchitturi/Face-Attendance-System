@@ -12,52 +12,683 @@
     <div class="row justify-content-center">
         <div class="col-md-5">
 
-            <form id="enrollForm">
+            <div class="enrollment-form-card">
+                <form id="enrollForm">
 
-                <input type="number" name="user_id"
-                       class="form-control mb-3"
-                       placeholder="ID" required>
+                    <div class="form-group">
+                        <input type="number" name="user_id" id="userId"
+                               class="form-control modern-input"
+                               placeholder="ID" required>
+                        <small id="userCheckMsg" class="d-none text-muted form-helper"></small>
+                    </div>
 
-                <input type="text" name="name"
-                       class="form-control mb-3"
-                       placeholder="Full Name" required>
-                <select name="role" class="form-control mb-3">
-                    <option value="student">Student</option>
-                    <option value="faculty">Faculty</option>
-                </select>
+                    <div class="form-group">
+                        <input type="text" name="name" id="userName"
+                               class="form-control modern-input"
+                               placeholder="Full Name" required>
+                    </div>
+
+                    <div class="form-group">
+                        <select name="role" class="form-control modern-input">
+                            <option value="student">Student</option>
+                            <option value="faculty">Faculty</option>
+                        </select>
+                    </div>
+                    
+                    <button type="submit" id="submitBtn" class="btn btn-modern w-100">
+                        <span>Start Enrollment</span>
+                        <span class="btn-icon">→</span>
+                    </button>
+
+                </form>
+            </div>
+
+        </div>
+    </div>
+
+</div>
+
+<style>
+/* ================= MODERN ENROLLMENT FORM ================= */
+.enrollment-form-card {
+    background: white;
+    padding: 32px;
+    border-radius: 16px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+    transition: all 0.3s ease;
+}
+
+.enrollment-form-card:hover {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+.form-group {
+    margin-bottom: 16px;
+}
+
+.modern-input {
+    border: 2px solid #e5e5e5 !important;
+    border-radius: 12px !important;
+    padding: 12px 16px !important;
+    font-size: 14px !important;
+    transition: all 0.3s ease !important;
+    background: #fafafa !important;
+    color: #111 !important;
+}
+
+.modern-input:focus {
+    border-color: #667eea !important;
+    background: white !important;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
+    outline: none !important;
+}
+
+.modern-input::placeholder {
+    color: #ccc !important;
+}
+
+.form-helper {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+}
+
+.btn-modern {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+    border: none !important;
+    border-radius: 12px !important;
+    padding: 14px 24px !important;
+    font-weight: 600 !important;
+    font-size: 15px !important;
+    color: white !important;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    position: relative !important;
+    overflow: hidden !important;
+}
+
+.btn-modern:hover:not(:disabled) {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4) !important;
+}
+
+.btn-modern:active:not(:disabled) {
+    transform: translateY(0) !important;
+}
+
+.btn-modern:disabled {
+    opacity: 0.6 !important;
+    cursor: not-allowed !important;
+}
+
+.btn-icon {
+    display: inline-block;
+    transition: transform 0.3s ease;
+}
+
+.btn-modern:hover:not(:disabled) .btn-icon {
+    transform: translateX(4px);
+}
+
+/* ================= FORM ANIMATIONS ================= */
+.form-group input,
+.form-group select {
+    animation: slideInUp 0.4s ease forwards;
+}
+
+.form-group:nth-child(1) input {
+    animation-delay: 0.05s;
+}
+
+.form-group:nth-child(2) input {
+    animation-delay: 0.1s;
+}
+
+.form-group:nth-child(3) select {
+    animation-delay: 0.15s;
+}
+
+#submitBtn {
+    animation: slideInUp 0.4s ease forwards;
+    animation-delay: 0.2s;
+}
+
+@keyframes slideInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+</style>
+
+
+<!-- ================= MODERN ENROLLMENT MODAL ================= -->
+<div id="enrollOverlay" class="modern-overlay d-none">
+    
+    <div class="modern-enrollment-container">
+        
+        <!-- CAMERA FEED -->
+        <div class="camera-feed-container">
+            <video id="enrollmentCamera" class="enrollment-camera-stream" playsinline autoplay muted></video>
+            <div class="camera-loading">
+                <div class="loader-spinner"></div>
+                <p>Initializing Camera...</p>
+            </div>
+        </div>
+        
+        <!-- RIGHT SIDE - PROGRESS -->
+        <div class="enrollment-progress-side">
+            
+            <!-- HEADER -->
+            <div class="enrollment-header">
+                <h2>Face Enrollment</h2>
+                <p>Complete enrollment process</p>
+            </div>
+            
+            <!-- STEP INDICATOR -->
+            <div class="step-indicators">
+                <div id="currentStep" class="step-counter">Step <span id="stepNum">1</span> of <span id="totalSteps">6</span></div>
+                <div class="step-dots">
+                    <div class="step-dot active" id="dot0"></div>
+                    <div class="step-dot" id="dot1"></div>
+                    <div class="step-dot" id="dot2"></div>
+                    <div class="step-dot" id="dot3"></div>
+                    <div class="step-dot" id="dot4"></div>
+                    <div class="step-dot" id="dot5"></div>
+                </div>
+            </div>
+            
+            <!-- CONTENT AREA -->
+            <div class="enrollment-content">
                 
-                <button type="submit" class="btn btn-primary w-100">
-                    Start Enrollment
-                </button>
-
-            </form>
-
+                <div class="step-card active" id="stepCard0">
+                    <div class="step-icon">🎥</div>
+                    <h3 id="stepTitle">Camera Initialization</h3>
+                    <p id="stepDesc">Preparing your camera for face capture</p>
+                    <div class="animated-loader">
+                        <div class="loader-dot"></div>
+                        <div class="loader-dot"></div>
+                        <div class="loader-dot"></div>
+                    </div>
+                </div>
+                
+            </div>
+            
+            <!-- LINEAR PROGRESS BAR -->
+            <div class="linear-progress-wrapper">
+                <div class="linear-progress">
+                    <div id="progressLine" class="progress-fill"></div>
+                </div>
+                <span id="progressText" class="progress-text">0%</span>
+            </div>
+            
         </div>
+        
     </div>
-
+    
 </div>
 
-
-<!-- ================= FULLSCREEN ENROLLMENT MODAL ================= -->
-<div id="enrollOverlay" class="enroll-overlay d-none">
-
-    <div class="enroll-box text-center">
-
-        <img id="stepImage"
-             src=""
-             class="enroll-image mb-4">
-
-        <h4 id="stepTitle"></h4>
-
-        <div class="progress mt-4">
-            <div id="progressBar"
-                 class="progress-bar bg-dark"
-                 style="width:0%"></div>
-        </div>
-
+<!-- ================= ALERT CARD POPUP ================= -->
+<div id="alertCard" class="alert-card-popup d-none">
+    <div class="alert-card-content">
+        <div class="alert-icon" id="alertIcon">⚠️</div>
+        <h3 id="alertTitle">Alert</h3>
+        <p id="alertMessage"></p>
+        <button id="alertCloseBtn" class="alert-btn">Close</button>
     </div>
-
 </div>
+
+<style>
+/* ================= CAMERA FEED ================= */
+.camera-feed-container {
+    position: relative;
+    width: 50%;
+    height: 100%;
+    background: #000;
+    border-radius: 20px 0 0 20px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.enrollment-camera-stream {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.camera-loading {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    color: white;
+    z-index: 10;
+}
+
+.loader-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ================= ENROLLMENT PROGRESS SIDE ================= */
+.enrollment-progress-side {
+    width: 50%;
+    display: flex;
+    flex-direction: column;
+    padding: 40px;
+    overflow-y: auto;
+}
+
+/* ================= MODERN ENROLLMENT STYLES (UPDATED) ================= */
+.modern-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    backdrop-filter: blur(5px);
+}
+
+.modern-enrollment-container {
+    background: white;
+    border-radius: 24px;
+    width: 90%;
+    max-width: 1000px;
+    height: 70vh;
+    max-height: 650px;
+    box-shadow: 0 20px 60px rgba(102, 126, 234, 0.4);
+    animation: slideUp 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+    display: flex;
+    overflow: hidden;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(40px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.enrollment-header {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.enrollment-header h2 {
+    font-size: 24px;
+    font-weight: 700;
+    color: #111;
+    margin: 0 0 4px 0;
+}
+
+.enrollment-header p {
+    color: #999;
+    font-size: 13px;
+    margin: 0;
+}
+
+/* STEP INDICATORS */
+.step-indicators {
+    margin-bottom: 20px;
+}
+
+.step-counter {
+    text-align: center;
+    font-size: 11px;
+    color: #999;
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: block;
+}
+
+.step-dots {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+}
+
+.step-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #e5e5e5;
+    transition: all 0.3s ease;
+    cursor: default;
+}
+
+.step-dot.active {
+    background: #667eea;
+    width: 20px;
+    border-radius: 5px;
+    animation: dotPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes dotPulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+}
+
+.step-dot.completed {
+    background: #34c759;
+}
+
+/* ENROLLMENT CONTENT */
+.enrollment-content {
+    flex: 1;
+    min-height: 180px;
+    margin: 15px 0;
+    perspective: 1000px;
+}
+
+.step-card {
+    text-align: center;
+    opacity: 0;
+    transform: translateX(40px);
+    pointer-events: none;
+    transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.step-card.active {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+}
+
+.step-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+    animation: iconBounce 0.6s ease infinite;
+}
+
+@keyframes iconBounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
+
+.step-card h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #111;
+    margin: 0 0 6px 0;
+}
+
+.step-card p {
+    color: #999;
+    font-size: 13px;
+    margin: 0 0 18px 0;
+}
+
+/* ANIMATED LOADER */
+.animated-loader {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 20px;
+}
+
+.loader-dot {
+    width: 10px;
+    height: 10px;
+    background: #667eea;
+    border-radius: 50%;
+    animation: dotWave 1.4s ease-in-out infinite;
+}
+
+.loader-dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.loader-dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes dotWave {
+    0%, 60%, 100% { transform: scale(1); opacity: 0.5; }
+    30% { transform: scale(1.3); opacity: 1; }
+}
+
+/* ANIMATED LOADER */
+.animated-loader {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 20px;
+}
+
+.loader-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #667eea;
+    animation: loaderBounce 1.4s infinite ease-in-out;
+}
+
+.loader-dot:nth-child(1) {
+    animation-delay: 0s;
+}
+
+.loader-dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.loader-dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes loaderBounce {
+    0%, 80%, 100% {
+        transform: translateY(0);
+        opacity: 0.6;
+    }
+    40% {
+        transform: translateY(-12px);
+        opacity: 1;
+    }
+}
+
+/* PROGRESS BAR */
+.linear-progress-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.linear-progress {
+    flex: 1;
+    height: 3px;
+    background: #e5e5e5;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #667eea, #764ba2);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow: 0 0 10px rgba(102, 126, 234, 0.5);
+}
+
+.progress-text {
+    font-size: 11px;
+    font-weight: 700;
+    color: #667eea;
+    min-width: 30px;
+    text-align: right;
+}
+
+/* ================= ALERT CARD POPUP ================= */
+.alert-card-popup {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10000;
+    animation: popupSlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.alert-card-popup.d-none {
+    display: none !important;
+}
+
+@keyframes popupSlideIn {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+.alert-card-popup::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: -1;
+}
+
+.alert-card-content {
+    background: white;
+    border-radius: 20px;
+    padding: 32px;
+    max-width: 400px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+    text-align: center;
+    animation: cardBounceIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes cardBounceIn {
+    0% {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+    70% {
+        transform: scale(1.05);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.alert-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+}
+
+.alert-card-content h3 {
+    font-size: 20px;
+    font-weight: 700;
+    color: #111;
+    margin: 0 0 8px 0;
+}
+
+.alert-card-content p {
+    color: #666;
+    font-size: 14px;
+    margin: 0 0 24px 0;
+    line-height: 1.5;
+}
+
+.alert-btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border: none;
+    border-radius: 10px;
+    color: white;
+    padding: 12px 32px;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.alert-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+}
+
+.alert-btn:active {
+    transform: translateY(0);
+}
+
+/* RESPONSIVE */
+@media (max-width: 900px) {
+    .modern-enrollment-container {
+        width: 95%;
+        max-width: none;
+        height: 80vh;
+        flex-direction: column;
+    }
+    
+    .camera-feed-container {
+        width: 100%;
+        height: 40%;
+        border-radius: 20px 20px 0 0;
+    }
+    
+    .enrollment-progress-side {
+        width: 100%;
+        height: 60%;
+        padding: 30px 20px;
+    }
+}
+
+@media (max-width: 640px) {
+    .modern-enrollment-container {
+        height: 90vh;
+    }
+    
+    .alert-card-content {
+        max-width: 90vw;
+        padding: 24px;
+    }
+    
+    .enrollment-header h2 {
+        font-size: 20px;
+    }
+}
+</style>
 
 
 <script>
@@ -65,65 +696,224 @@
 const steps = [
     {
         title: "Camera Initialization",
-        image: "/static/images/enroll_steps/camera.gif",
-        progress: 10
+        desc: "Preparing your camera for face capture",
+        icon: "🎥",
+        progress: 15
     },
     {
-        title: "Sample Image Collection (50 Images)",
-        image: "/static/images/enroll_steps/capture.gif",
+        title: "Face Detection",
+        desc: "Scanning for your face (20 captures)",
+        icon: "👤",
         progress: 30
     },
     {
         title: "Image Preprocessing",
-        image: "/static/images/enroll_steps/preprocess.png",
+        desc: "Processing captured images",
+        icon: "⚙️",
         progress: 50
     },
     {
-        title: "Feature Extraction (LBPH)",
-        image: "/static/images/enroll_steps/lbph.png",
+        title: "Feature Extraction",
+        desc: "Analyzing facial features (LBPH)",
+        icon: "🔍",
         progress: 70
     },
     {
         title: "Model Training",
-        image: "/static/images/enroll_steps/training.gif",
-        progress: 90
+        desc: "Training recognition model",
+        icon: "🤖",
+        progress: 85
     },
     {
-        title: "Model Saved Successfully",
-        image: "/static/images/enroll_steps/success.gif",
+        title: "Enrollment Complete",
+        desc: "Face model saved successfully!",
+        icon: "✅",
         progress: 100
     }
 ];
 
+let currentStep = 0;
+
+/* ================= ALERT CARD FUNCTIONS ================= */
+function showAlertCard(title, message, icon = "⚠️") {
+    document.getElementById("alertIcon").textContent = icon;
+    document.getElementById("alertTitle").textContent = title;
+    document.getElementById("alertMessage").textContent = message;
+    document.getElementById("alertCard").classList.remove("d-none");
+}
+
+function closeAlertCard() {
+    document.getElementById("alertCard").classList.add("d-none");
+}
+
+document.getElementById("alertCloseBtn").addEventListener("click", closeAlertCard);
+document.getElementById("alertCard").addEventListener("click", function(e) {
+    if (e.target === this) closeAlertCard();
+});
+
+/* ================= CAMERA STREAM ================= */
+async function startCameraStream() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user' }
+        });
+        const videoElement = document.getElementById('enrollmentCamera');
+        videoElement.srcObject = stream;
+        
+        // Hide loading indicator when camera starts
+        setTimeout(() => {
+            if (document.querySelector('.camera-loading')) {
+                document.querySelector('.camera-loading').style.display = 'none';
+            }
+        }, 500);
+        
+        return stream;
+    } catch (e) {
+        console.error('Camera error:', e);
+        showAlertCard("Camera Error", "Could not access camera. Please allow camera permissions.", "📷");
+    }
+}
+
+function stopCameraStream() {
+    const videoElement = document.getElementById('enrollmentCamera');
+    if (videoElement.srcObject) {
+        videoElement.srcObject.getTracks().forEach(track => track.stop());
+    }
+}
+
+function updateStep(stepIndex) {
+    currentStep = stepIndex;
+    
+    // Update step card
+    document.querySelectorAll('.step-card').forEach(card => {
+        card.classList.remove('active');
+    });
+    
+    const stepCard = document.getElementById(`stepCard${stepIndex}`);
+    if (stepCard) {
+        stepCard.classList.add('active');
+    }
+    
+    // Update dots
+    document.querySelectorAll('.step-dot').forEach((dot, i) => {
+        dot.classList.remove('active', 'completed');
+        if (i === stepIndex) {
+            dot.classList.add('active');
+        } else if (i < stepIndex) {
+            dot.classList.add('completed');
+        }
+    });
+    
+    // Update progress
+    const progress = steps[stepIndex].progress;
+    document.getElementById('progressLine').style.width = progress + '%';
+    document.getElementById('progressText').textContent = progress + '%';
+    document.getElementById('stepNum').textContent = stepIndex + 1;
+}
+
+/* ================= CHECK USER EXISTENCE ================= */
+document.getElementById("userId").addEventListener("blur", async function() {
+    const userId = this.value;
+    const checkMsg = document.getElementById("userCheckMsg");
+    const submitBtn = document.getElementById("submitBtn");
+    
+    if (!userId) {
+        checkMsg.classList.add("d-none");
+        submitBtn.disabled = false;
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/check_user/${userId}`);
+        const data = await response.json();
+        
+        if (data.exists) {
+            checkMsg.innerHTML = `<span style="color: red;">❌ User ID ${userId} already enrolled as "${data.user_name}"</span>`;
+            checkMsg.classList.remove("d-none");
+            submitBtn.disabled = true;
+        } else {
+            checkMsg.innerHTML = `<span style="color: green;">✅ User ID available</span>`;
+            checkMsg.classList.remove("d-none");
+            submitBtn.disabled = false;
+        }
+    } catch (e) {
+        console.error("Error checking user:", e);
+    }
+});
 
 document.getElementById("enrollForm").onsubmit = async function(e){
-
     e.preventDefault();
 
     const form = new FormData(e.target);
     const userId = form.get("user_id");
 
-    document.getElementById("enrollOverlay").classList.remove("d-none");
-
-    for(let i = 0; i < steps.length; i++){
-
-        document.getElementById("stepImage").src = steps[i].image;
-        document.getElementById("stepTitle").innerText = steps[i].title;
-        document.getElementById("progressBar").style.width =
-            steps[i].progress + "%";
-
-        await new Promise(r => setTimeout(r, 1500));
+    // Pre-flight check
+    try {
+        const checkResponse = await fetch(`/check_user/${userId}`);
+        const checkData = await checkResponse.json();
+        if (checkData.exists) {
+            showAlertCard("User Already Enrolled", `User ID ${userId} is already enrolled!`, "❌");
+            return;
+        }
+    } catch (e) {
+        console.error("Pre-flight check error:", e);
     }
 
-    // Backend capture + training
-    await fetch("/enroll", { method:"POST", body: form });
-    await fetch(`/capture/${userId}`);
-    await fetch("/train_test_progress");
+    document.getElementById("enrollOverlay").classList.remove("d-none");
+    currentStep = 0;
+    updateStep(0);
+    
+    // Start camera stream (just for user preview)
+    await startCameraStream();
+    
+    await new Promise(r => setTimeout(r, 500));
+
+    // Animate through steps
+    for(let i = 0; i < steps.length; i++){
+        await new Promise(r => setTimeout(r, 800));
+        updateStep(i);
+    }
+
+    await new Promise(r => setTimeout(r, 500));
+
+    // Backend enrollment
+    const enrollResponse = await fetch("/enroll", { method:"POST", body: form });
+    
+    if (!enrollResponse.ok) {
+        const errorData = await enrollResponse.json();
+        stopCameraStream();
+        document.getElementById("enrollOverlay").classList.add("d-none");
+        showAlertCard("Enrollment Error", errorData.message, "❌");
+        return;
+    }
+    
+    // Backend capture (backend will handle camera access)
+    const captureResponse = await fetch(`/capture/${userId}`);
+    const result = await captureResponse.json();
+
+    // Check for duplicate face detection
+    if (result.status === "duplicate_face") {
+        stopCameraStream();
+        document.getElementById("enrollOverlay").classList.add("d-none");
+        showAlertCard("Duplicate Face Detected", result.message, "⚠️");
+        return;
+    }
 
     setTimeout(()=>{
+        stopCameraStream();
         document.getElementById("enrollOverlay").classList.add("d-none");
-        showTopToast("Enrollment Completed Successfully ✅");
-    }, 1000);
+        if (result.trained) {
+            showAlertCard("Success! 🎉", "Enrollment & Training Completed Successfully!", "✅");
+            setTimeout(() => {
+                closeAlertCard();
+                document.getElementById("enrollForm").reset();
+                document.getElementById("userCheckMsg").classList.add("d-none");
+                document.getElementById("submitBtn").disabled = false;
+            }, 2000);
+        } else {
+            showAlertCard("Training Failed", "Enrollment completed but training failed. Please train manually.", "⚠️");
+        }
+    }, 500);
 };
 
 </script>

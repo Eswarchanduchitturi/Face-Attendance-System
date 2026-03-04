@@ -79,13 +79,9 @@
                 <span>Enroll</span>
             </a>
 
-            <a href="/attendance/faculty" class="side-link">
-                <i class="fa-solid fa-chalkboard-user"></i>
-                <span>Faculty Attendance</span>
-            </a>
-            <a href="/attendance/students" class="side-link">
-                <i class="fa-solid fa-users"></i>
-                <span>Student Attendance</span>
+            <a href="/attendance" class="side-link">
+                <i class="fa-solid fa-calendar-check"></i>
+                <span>Attendance</span>
             </a>
             <a href="/attendance/analytics" class="side-link">
                 <i class="fa-solid fa-chart-line"></i>
@@ -133,30 +129,6 @@
     </div>
 
 </div>
-<div class="sidebar-folder">
-
-    <div class="side-link folder-toggle"
-         onclick="toggleAttendanceFolder()">
-        <i class="fa-solid fa-calendar-check"></i>
-        <span>Attendance</span>
-        <i class="fa-solid fa-chevron-down ms-auto small"></i>
-    </div>
-
-    <div id="attendanceSubmenu" class="submenu">
-
-        <a href="/attendance/faculty"
-           class="side-sublink">
-            👨‍🏫 Faculty Attendance
-        </a>
-
-        <a href="/attendance/students"
-           class="side-sublink">
-            🎓 Student Attendance
-        </a>
-
-    </div>
-
-</div>
 
 <!-- ================= CENTER MESSAGE CARD ================= -->
 <div id="centerMessage" class="center-message d-none">
@@ -183,10 +155,7 @@ function toggleLiveFolder(){
         icon.style.transform = "rotate(0deg)";
     }
 }
-function toggleAttendanceFolder(){
-    document.getElementById("attendanceSubmenu")
-        .classList.toggle("show-submenu");
-}
+
 /* ================= SET MODE ================= */
 async function setMode(mode){
     await fetch(`/set_mode/${mode}`);
