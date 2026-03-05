@@ -1,26 +1,48 @@
 {% extends "base.html" %}
+{% block page_title %}Admin Feedback{% endblock %}
 {% block content %}
 
-<h4 class="mb-4">User Feedback</h4>
+<div class="admin-page">
+    <section class="page-head">
+        <h1>User Feedback</h1>
+        <p>Collect ratings and comments to improve user experience.</p>
+    </section>
 
-<table class="table table-bordered">
-    <thead>
-        <tr>
-            <th>Rating</th>
-            <th>Message</th>
-            <th>Date</th>
-        </tr>
-    </thead>
+    <section class="frosted-card">
+        <div class="table-responsive">
+            <table class="table modern-table align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Rating</th>
+                        <th>Message</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for f in feedback %}
+                    <tr>
+                        <td><span class="badge bg-primary">{{ f[0] }}/5</span></td>
+                        <td>{{ f[1] }}</td>
+                        <td>{{ f[2] }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
 
-    <tbody>
-        {% for f in feedback %}
-        <tr>
-            <td>{{ f[0] }}/5</td>
-            <td>{{ f[1] }}</td>
-            <td>{{ f[2] }}</td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+<style>
+.admin-page { display: grid; gap: 14px; }
+.page-head h1 {
+    margin: 0;
+    font-family: "Sora", sans-serif;
+    font-size: 30px;
+}
+.page-head p {
+    margin: 5px 0 0;
+    color: #607483;
+}
+</style>
 
 {% endblock %}

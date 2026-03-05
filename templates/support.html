@@ -1,98 +1,55 @@
 {% extends "base.html" %}
+{% block page_title %}Support Center{% endblock %}
 {% block content %}
 
-<div class="container mt-5">
+<div class="support-shell">
+    <section class="support-head">
+        <h1>Support Center</h1>
+        <p>Help, feedback, grievances and system architecture overview.</p>
+    </section>
 
-    <!-- PAGE HEADER -->
-    <div class="text-center mb-5">
-        <h1 class="fw-bold">Support Center</h1>
-        <p class="text-muted">
-            Help, Feedback, Grievances & System Overview
-        </p>
-    </div>
-
-    <!-- ================= ABOUT SECTION ================= -->
-    <div class="support-card mb-5">
-
-        <h3 class="mb-4">About Face Attendance System</h3>
-
-       
-
-        <!-- EXPLANATION -->
+    <section class="support-card matrix-card">
+        <h3>About Face Attendance System</h3>
         <h5>How the Application Works</h5>
-
-        <ul class="mt-3">
-            <li>
-                The system captures live video through the camera
-                during check-in or check-out sessions.
-            </li>
-            <li>
-                Each frame is processed using the Haar Cascade
-                algorithm to detect facial regions.
-            </li>
-            <li>
-                Detected faces are converted into grayscale
-                and preprocessed for better recognition accuracy.
-            </li>
-            <li>
-                Facial features are extracted using the
-                LBPH (Local Binary Pattern Histogram) algorithm.
-            </li>
-            <li>
-                Extracted features are compared with trained
-                employee facial data stored in the model.
-            </li>
-            <li>
-                If the identity is verified, attendance is marked
-                either as Check-In or Check-Out.
-            </li>
-            <li>
-                The system automatically calculates worked hours
-                based on login and logout timestamps.
-            </li>
-            <li>
-                All records are securely stored in the database
-                with date, day, and time details.
-            </li>
+        <ul>
+            <li>The system captures live video through the camera during check-in or check-out sessions.</li>
+            <li>Each frame is processed using Haar Cascade to detect face regions.</li>
+            <li>Detected faces are converted into grayscale and preprocessed for better recognition.</li>
+            <li>Facial features are extracted using LBPH (Local Binary Pattern Histogram).</li>
+            <li>Extracted features are compared with trained employee facial data from the model.</li>
+            <li>If identity is verified, attendance is marked as Check-In or Check-Out.</li>
+            <li>The system calculates worked hours from login and logout timestamps.</li>
+            <li>Records are stored securely with date, day, time and images.</li>
         </ul>
 
         <hr class="my-4">
 
         <h5>Core Technologies Used</h5>
-
         <ul>
-            <li>Python & Flask (Backend Framework)</li>
-            <li>OpenCV (Computer Vision Processing)</li>
-            <li>Haar Cascade (Face Detection)</li>
-            <li>LBPH Face Recognizer (Feature Extraction)</li>
-            <li>SQLite Database (Data Storage)</li>
-            <li>Bootstrap & Custom CSS (Modern UI)</li>
+            <li>Python + Flask</li>
+            <li>OpenCV + Haar Cascade</li>
+            <li>LBPH Face Recognizer</li>
+            <li>SQLite Database</li>
+            <li>Bootstrap + Custom UI</li>
         </ul>
 
         <hr class="my-4">
 
         <h5>System Features</h5>
-
         <ul>
-            <li>Smart Check-In & Check-Out Mode</li>
-            <li>Automatic Worked Hours Calculation</li>
-            <li>Live Face Verification</li>
-            <li>Recognition Accuracy Monitoring</li>
-            <li>Admin Dashboard & Analytics</li>
-            <li>Attendance History & PDF Export</li>
-            <li>Employee Enrollment & Model Training</li>
-            <li>Complaint & Feedback Management</li>
+            <li>Smart Check-In / Check-Out mode</li>
+            <li>Auto worked-hours calculation</li>
+            <li>Live face verification</li>
+            <li>Recognition monitoring and analytics</li>
+            <li>Attendance history and PDF export</li>
+            <li>Enrollment and model training</li>
+            <li>Complaint and feedback management</li>
         </ul>
+    </section>
 
-    </div>
-
-    <!-- ================= FEEDBACK / GRIEVANCE ================= -->
-    <div class="support-card">
-
-        <h4 class="mb-3">Submit Feedback or Grievance</h4>
-
+    <section class="support-card matrix-card">
+        <h4>Submit Feedback or Grievance</h4>
         <form method="POST" action="/support">
-
             <div class="mb-3">
                 <label class="form-label">Category</label>
                 <select name="category" class="form-control">
@@ -104,20 +61,69 @@
 
             <div class="mb-3">
                 <label class="form-label">Message</label>
-                <textarea name="message"
-                          rows="4"
-                          class="form-control"
-                          required></textarea>
+                <textarea name="message" rows="4" class="form-control" required></textarea>
             </div>
 
-            <button class="btn btn-primary">
-                Submit
-            </button>
-
+            <button class="btn btn-primary">Submit</button>
         </form>
-
-    </div>
-
+    </section>
 </div>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DotGothic16&display=swap');
+
+.support-shell {
+    display: grid;
+    gap: 16px;
+}
+
+.support-head h1 {
+    margin: 0;
+    font-family: "Sora", sans-serif;
+    font-size: 30px;
+}
+
+.support-head p {
+    margin: 6px 0 0;
+    color: #5b6b79;
+}
+
+.matrix-card {
+    font-family: "DotGothic16", monospace;
+    border: 1px solid #cfd8e3;
+    background:
+        radial-gradient(circle at 1px 1px, rgba(33, 37, 41, 0.08) 1px, transparent 0) 0 0 / 14px 14px,
+        linear-gradient(180deg, #f9fbfe 0%, #f3f7fb 100%);
+}
+
+.matrix-card h3,
+.matrix-card h4,
+.matrix-card h5 {
+    font-family: "DotGothic16", monospace;
+    letter-spacing: 0.4px;
+    color: #101820;
+}
+
+.matrix-card ul {
+    margin-top: 10px;
+    padding-left: 22px;
+    line-height: 1.55;
+    color: #1d2d3a;
+}
+
+.matrix-card .form-label {
+    font-size: 14px;
+    color: #152533;
+}
+
+.matrix-card .form-control {
+    background: #ffffff;
+    border: 1px solid #bac8d7;
+}
+
+.matrix-card .btn-primary {
+    min-width: 130px;
+}
+</style>
 
 {% endblock %}

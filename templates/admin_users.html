@@ -1,9 +1,14 @@
 {% extends "base.html" %}
+{% block page_title %}Admin Users{% endblock %}
 {% block content %}
 
-<div class="container mt-5">
-
-    <h3 class="mb-4">User Management</h3>
+<div class="admin-page">
+    <section class="page-head">
+        <div>
+            <h1>User Management</h1>
+            <p>Edit roles or remove accounts without changing enrollment features.</p>
+        </div>
+    </section>
 
     {% if msg == 'deleted' %}
         <div class="alert alert-success">User deleted successfully.</div>
@@ -13,69 +18,69 @@
         <div class="alert alert-danger">User not found. Refresh and try again.</div>
     {% endif %}
 
-    <div class="table-responsive">
-        <table class="table modern-table align-middle">
-
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>Role</th>
-                    <th width="220">Actions</th>
-                </tr>
-            </thead>
-
-           <tbody>
-{% for user in users %}
-<tr>
-    <td>{{ user[0] }}</td>
-
-    <td>
-        <input type="text"
-               name="name"
-               value="{{ user[1] }}"
-               class="form-control"
-               form="edit-form-{{ user[0] }}"
-               required>
-    </td>
-
-    <td>
-        <select name="role" class="form-select" form="edit-form-{{ user[0] }}">
-            <option value="student"
-                {% if user[2]=='student' %}selected{% endif %}>
-                Student
-            </option>
-            <option value="faculty"
-                {% if user[2]=='faculty' %}selected{% endif %}>
-                Faculty
-            </option>
-            <option value="admin"
-                {% if user[2]=='admin' %}selected{% endif %}>
-                Admin
-            </option>
-        </select>
-    </td>
-
-    <td class="d-flex gap-2">
-        <form id="edit-form-{{ user[0] }}" method="POST" action="/admin/edit_user/{{ user[0] }}" style="display:inline;">
-            <button type="submit" class="btn btn-success btn-sm">
-                Update
-            </button>
-        </form>
-
-        <form method="POST" action="/admin/delete_user/{{ user[0] }}" style="display:inline;">
-            <button type="submit"
-                    class="btn btn-danger btn-sm"
-                    onclick="return confirm('Delete permanently?')">
-                Delete
-            </button>
-        </form>
-    </td>
-
-</tr>
-{% endfor %}
-</tbody>
-        </table>
-    </div>
+    <section class="frosted-card">
+        <div class="table-responsive">
+            <table class="table modern-table align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Role</th>
+                        <th width="230">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for user in users %}
+                    <tr>
+                        <td><strong>#{{ user[0] }}</strong></td>
+                        <td>
+                            <input type="text"
+                                   name="name"
+                                   value="{{ user[1] }}"
+                                   class="form-control"
+                                   form="edit-form-{{ user[0] }}"
+                                   required>
+                        </td>
+                        <td>
+                            <select name="role" class="form-select" form="edit-form-{{ user[0] }}">
+                                <option value="student" {% if user[2]=='student' %}selected{% endif %}>Student</option>
+                                <option value="faculty" {% if user[2]=='faculty' %}selected{% endif %}>Faculty</option>
+                                <option value="admin" {% if user[2]=='admin' %}selected{% endif %}>Admin</option>
+                            </select>
+                        </td>
+                        <td class="d-flex gap-2">
+                            <form id="edit-form-{{ user[0] }}" method="POST" action="/admin/edit_user/{{ user[0] }}" style="display:inline;">
+                                <button type="submit" class="btn btn-success btn-sm">
+                                    <i class="fa-solid fa-floppy-disk me-1"></i> Update
+                                </button>
+                            </form>
+                            <form method="POST" action="/admin/delete_user/{{ user[0] }}" style="display:inline;">
+                                <button type="submit"
+                                        class="btn btn-danger btn-sm"
+                                        onclick="return confirm('Delete permanently?')">
+                                    <i class="fa-solid fa-trash me-1"></i> Delete
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
 </div>
+
+<style>
+.admin-page { display: grid; gap: 14px; }
+.page-head h1 {
+    margin: 0;
+    font-family: "Sora", sans-serif;
+    font-size: 30px;
+}
+.page-head p {
+    margin: 5px 0 0;
+    color: #607483;
+}
+</style>
+
 {% endblock %}

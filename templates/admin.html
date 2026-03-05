@@ -1,291 +1,311 @@
 {% extends "base.html" %}
+{% block page_title %}Admin Analytics{% endblock %}
 {% block content %}
 
-<h3 class="mb-4">AI Performance Analytics Panel</h3>
-
-<!-- SUMMARY CARDS -->
-<div class="row g-4">
-
-    <div class="col-md-4">
-        <div class="frosted-card text-center">
-            <h6>Total Users</h6>
-            <h2>{{ total_users }}</h2>
+<div class="admin-shell">
+    <section class="admin-hero">
+        <div>
+            <p class="label">Control Center</p>
+            <h1>AI Performance and Operations</h1>
+            <p>Monitor system accuracy, manage users, and review support signals from one dashboard.</p>
         </div>
-    </div>
-
-    <div class="col-md-4">
-        <div class="frosted-card text-center">
-            <h6>Total Attendance Records</h6>
-            <h2>{{ total_attendance }}</h2>
+        <div class="hero-actions">
+            <a href="/logout" class="btn btn-danger">Logout</a>
         </div>
-    </div>
+    </section>
 
-    <div class="col-md-4">
-        <div class="frosted-card text-center">
-            <h6>Recognition Threshold</h6>
-            <h2>{{ threshold }}</h2>
-        </div>
-    </div>
+    <section class="metrics-grid">
+        <article class="metric-card">
+            <span>Total Users</span>
+            <strong>{{ total_users }}</strong>
+        </article>
+        <article class="metric-card">
+            <span>Attendance Records</span>
+            <strong>{{ total_attendance }}</strong>
+        </article>
+        <article class="metric-card">
+            <span>Recognition Threshold</span>
+            <strong>{{ threshold }}</strong>
+        </article>
+    </section>
 
-</div>
-
-<hr class="my-4">
-<hr class="my-4">
-
-<div class="row g-3 mb-4">
-
-    <div class="col-md-6">
-        <a href="/admin/complaints" class="btn btn-warning w-100">
-            <i class="fa-solid fa-bug"></i>
-            Manage Complaints
-        </a>
-    </div>
-
-    <div class="col-md-6">
-        <a href="/admin/feedback" class="btn btn-info w-100">
-            <i class="fa-solid fa-star"></i>
-            View Feedback
-        </a>
-    </div>
-    <!-- Manage Users (Large Glass Button) -->
-<div class="col-md-8">
-    <a href="/admin/users" class="admin-card large-glass-btn">
-        <div class="admin-icon">
+    <section class="quick-links">
+        <a href="/admin/users" class="quick-card">
             <i class="fa-solid fa-users"></i>
+            <div>
+                <h4>Manage Users</h4>
+                <p>Add, edit and remove user accounts.</p>
+            </div>
+        </a>
+        <a href="/admin/complaints" class="quick-card">
+            <i class="fa-solid fa-bug"></i>
+            <div>
+                <h4>Complaints</h4>
+                <p>Review and close support issues.</p>
+            </div>
+        </a>
+        <a href="/admin/feedback" class="quick-card">
+            <i class="fa-solid fa-star"></i>
+            <div>
+                <h4>Feedback</h4>
+                <p>Track sentiment and user comments.</p>
+            </div>
+        </a>
+    </section>
+
+    <section class="frosted-card mb-3">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label small mb-1">Date Filter</label>
+                <input type="date" id="dateFilter" class="form-control">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small mb-1">Range</label>
+                <select id="rangeToggle" class="form-select">
+                    <option value="today">Today</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <button class="btn btn-primary w-100" onclick="loadAllCharts()">
+                    <i class="fa-solid fa-rotate me-1"></i> Refresh Charts
+                </button>
+            </div>
+            <div class="col-md-3">
+                <button class="btn btn-outline-secondary w-100" onclick="exportChart(accuracyChart)">
+                    <i class="fa-solid fa-download me-1"></i> Export Accuracy
+                </button>
+            </div>
         </div>
-        <div class="admin-text">
-            <h4>Manage Users</h4>
-            <p>Add, edit or permanently remove employees</p>
-        </div>
-    </a>
+    </section>
+
+    <section class="frosted-card mb-3 chart-card">
+        <div class="card-title">Model Accuracy Trend</div>
+        <canvas id="accuracyChart" height="110"></canvas>
+    </section>
+
+    <section class="frosted-card mb-3 chart-card">
+        <div class="card-title">Success vs Failure Distribution</div>
+        <canvas id="successFailureChart" height="110"></canvas>
+    </section>
+
+    <section class="frosted-card chart-card">
+        <div class="card-title">Model Confidence Distribution</div>
+        <canvas id="confidenceChart" height="110"></canvas>
+    </section>
 </div>
 
+<style>
+.admin-shell { display: grid; gap: 14px; }
+.admin-hero {
+    background: linear-gradient(135deg, #1f3a56 0%, #27496d 100%);
+    color: #eef6ff;
+    border-radius: 20px;
+    padding: 22px;
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+}
+.admin-hero .label {
+    margin: 0 0 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    font-size: 12px;
+    color: #b7d0ea;
+}
+.admin-hero h1 {
+    margin: 0;
+    font-family: "Sora", sans-serif;
+    font-size: 28px;
+}
+.admin-hero p { margin: 8px 0 0; color: #d8e8f8; max-width: 740px; }
 
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+.metric-card {
+    background: #fff;
+    border: 1px solid #d9e0e6;
+    border-radius: 16px;
+    padding: 16px;
+    box-shadow: 0 10px 24px rgba(15,23,32,.06);
+}
+.metric-card span {
+    display: block;
+    font-size: 12px;
+    color: #647887;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+}
+.metric-card strong {
+    font-family: "Sora", sans-serif;
+    font-size: 30px;
+    margin-top: 6px;
+    display: block;
+}
 
-</div>
+.quick-links { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.quick-card {
+    text-decoration: none;
+    color: inherit;
+    background: #fff;
+    border: 1px solid #d9e0e6;
+    border-radius: 16px;
+    padding: 16px;
+    display: grid;
+    grid-template-columns: 38px 1fr;
+    gap: 12px;
+    align-items: start;
+    transition: transform .2s ease, box-shadow .2s ease;
+}
+.quick-card i {
+    width: 38px; height: 38px; border-radius: 10px;
+    background: #edf4fb; color: #2c567e;
+    display: grid; place-items: center;
+}
+.quick-card h4 { margin: 0; font-size: 16px; }
+.quick-card p { margin: 4px 0 0; font-size: 13px; color: #5f7484; }
+.quick-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 26px rgba(15,23,32,.08);
+}
 
+.chart-card .card-title {
+    font-weight: 700;
+    margin-bottom: 10px;
+    font-size: 14px;
+}
 
-<!-- FILTER + CONTROLS -->
-<div class="frosted-card mb-4">
-    <div class="row g-3 align-items-center">
-
-        <div class="col-md-3">
-            <input type="date" id="dateFilter" class="form-control">
-        </div>
-
-        <div class="col-md-3">
-            <select id="rangeToggle" class="form-control">
-                <option value="today">Today</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-            </select>
-        </div>
-
-        <div class="col-md-3">
-            <button class="btn btn-primary w-100" onclick="loadAllCharts()">
-                Manual Refresh
-            </button>
-        </div>
-
-        <div class="col-md-3 text-end">
-            <button class="btn btn-outline-secondary"
-                    onclick="exportChart(accuracyChart)">
-                Export Accuracy Chart
-            </button>
-        </div>
-
-    </div>
-</div>
-
-<!-- ACCURACY LINE + SCATTER -->
-<div class="frosted-card mb-4">
-    <h6>Model Accuracy Trend</h6>
-    <canvas id="accuracyChart" height="120"></canvas>
-</div>
-
-<!-- SUCCESS VS FAILURE STACKED BAR -->
-<div class="frosted-card mb-4">
-    <h6>Success vs Failure Distribution</h6>
-    <canvas id="successFailureChart" height="120"></canvas>
-</div>
-
-<!-- CONFIDENCE DISTRIBUTION -->
-<div class="frosted-card mb-4">
-    <h6>Model Confidence Distribution</h6>
-    <canvas id="confidenceChart" height="120"></canvas>
-</div>
-
-<a href="/logout" class="btn btn-danger btn-sm float-end">
-    Logout
-</a>
+@media (max-width: 980px) {
+    .metrics-grid, .quick-links { grid-template-columns: 1fr; }
+    .admin-hero h1 { font-size: 24px; }
+}
+</style>
 
 <script>
-
 let accuracyChart;
 let successFailureChart;
 let confidenceChart;
 
-function loadAllCharts(){
+function loadAllCharts() {
     loadAccuracy();
     loadSuccessFailure();
     loadConfidence();
 }
 
-/* ================= ACCURACY CHART ================= */
-function loadAccuracy(){
-
+function loadAccuracy() {
     const date = document.getElementById("dateFilter").value;
     const range = document.getElementById("rangeToggle").value;
-
     let url = `/admin/accuracy_data?range=${range}`;
-    if(date){
-        url += `&date=${date}`;
-    }
+    if (date) url += `&date=${date}`;
 
-    fetch(url)
-    .then(res => res.json())
-    .then(data => {
-
+    fetch(url).then(res => res.json()).then(data => {
         const labels = data.map(d => d.hour);
         const values = data.map(d => d.accuracy);
-
-        const movingAvg = values.map((val, i, arr)=>{
-            if(i < 2) return null;
-            return ((arr[i] + arr[i-1] + arr[i-2]) / 3).toFixed(2);
+        const movingAvg = values.map((val, i, arr) => {
+            if (i < 2) return null;
+            return ((arr[i] + arr[i - 1] + arr[i - 2]) / 3).toFixed(2);
         });
+        const peak = values.length ? Math.max(...values) : 0;
 
-        const peak = Math.max(...values);
-
-        if(accuracyChart){
-            accuracyChart.destroy();
-        }
+        if (accuracyChart) accuracyChart.destroy();
 
         const ctx = document.getElementById("accuracyChart").getContext("2d");
-
-        const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-        gradient.addColorStop(0, "rgba(0, 123, 255, 0.4)");
-        gradient.addColorStop(1, "rgba(0, 123, 255, 0)");
+        const gradient = ctx.createLinearGradient(0, 0, 0, 320);
+        gradient.addColorStop(0, "rgba(13, 110, 253, 0.35)");
+        gradient.addColorStop(1, "rgba(13, 110, 253, 0)");
 
         accuracyChart = new Chart(ctx, {
             data: {
                 labels: labels,
                 datasets: [
-
                     {
                         type: "line",
                         label: "Accuracy %",
                         data: values,
+                        borderColor: "#0d6efd",
                         borderWidth: 2,
-                        tension: 0.4,
+                        tension: 0.35,
                         backgroundColor: gradient,
                         fill: true
                     },
-
                     {
                         type: "scatter",
-                        label: "Data Points",
-                        data: values.map((v,i)=>({x:labels[i], y:v})),
-                        pointRadius: 6
+                        label: "Points",
+                        data: values.map((v, i) => ({ x: labels[i], y: v })),
+                        pointRadius: 4,
+                        pointBackgroundColor: "#cf2e2e"
                     },
-
                     {
                         type: "line",
                         label: "Moving Average",
                         data: movingAvg,
-                        borderDash: [5,5],
-                        tension: 0.4
+                        borderColor: "#1f3a56",
+                        borderDash: [5, 5],
+                        tension: 0.35
                     }
-
                 ]
             },
             options: {
                 responsive: true,
-                animation: true,
-                scales: {
-                    y: { min: 0, max: 100 }
-                }
+                scales: { y: { min: 0, max: 100 } }
             }
         });
 
-        const peakIndex = values.indexOf(peak);
-        accuracyChart.data.datasets[1].data[peakIndex].r = 10;
-        accuracyChart.update();
-
+        if (values.length) {
+            const peakIndex = values.indexOf(peak);
+            accuracyChart.data.datasets[1].data[peakIndex].r = 8;
+            accuracyChart.update();
+        }
     });
 }
 
-/* ================= SUCCESS / FAILURE ================= */
-function loadSuccessFailure(){
-
-    fetch("/admin/success_failure_data")
-    .then(res=>res.json())
-    .then(data=>{
-
-        if(successFailureChart){
-            successFailureChart.destroy();
-        }
-
-        successFailureChart = new Chart(
-            document.getElementById("successFailureChart"),
-            {
-                type: "bar",
-                data: {
-                    labels: data.labels,
-                    datasets: [
-                        {
-                            label: "Success",
-                            data: data.success
-                        },
-                        {
-                            label: "Failure",
-                            data: data.failure
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    scales: {
-                        x: { stacked: true },
-                        y: { stacked: true }
-                    }
+function loadSuccessFailure() {
+    fetch("/admin/success_failure_data").then(res => res.json()).then(data => {
+        if (successFailureChart) successFailureChart.destroy();
+        successFailureChart = new Chart(document.getElementById("successFailureChart"), {
+            type: "bar",
+            data: {
+                labels: data.labels,
+                datasets: [
+                    { label: "Success", data: data.success, backgroundColor: "#0d6efd" },
+                    { label: "Failure", data: data.failure, backgroundColor: "#cf2e2e" }
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: { stacked: true },
+                    y: { stacked: true }
                 }
             }
-        );
+        });
     });
 }
 
-/* ================= CONFIDENCE DISTRIBUTION ================= */
-function loadConfidence(){
-
-    fetch("/admin/confidence_distribution")
-    .then(res=>res.json())
-    .then(data=>{
-
-        if(confidenceChart){
-            confidenceChart.destroy();
-        }
-
-        confidenceChart = new Chart(
-            document.getElementById("confidenceChart"),
-            {
-                type: "bar",
-                data: {
-                    labels: data.labels,
-                    datasets: [{
-                        label: "Confidence Range",
-                        data: data.values
-                    }]
-                },
-                options: {
-                    responsive: true
-                }
-            }
-        );
+function loadConfidence() {
+    fetch("/admin/confidence_distribution").then(res => res.json()).then(data => {
+        if (confidenceChart) confidenceChart.destroy();
+        confidenceChart = new Chart(document.getElementById("confidenceChart"), {
+            type: "bar",
+            data: {
+                labels: data.labels,
+                datasets: [{
+                    label: "Confidence Range",
+                    data: data.values,
+                    backgroundColor: "#2c567e"
+                }]
+            },
+            options: { responsive: true }
+        });
     });
 }
 
-/* ================= EXPORT ================= */
-function exportChart(chart){
+function exportChart(chart) {
+    if (!chart) return;
     const url = chart.toBase64Image();
     const a = document.createElement("a");
     a.href = url;
@@ -293,9 +313,7 @@ function exportChart(chart){
     a.click();
 }
 
-/* INITIAL LOAD */
 loadAllCharts();
-
 </script>
 
 {% endblock %}

@@ -6,6 +6,7 @@ import datetime
 import os
 import io
 import math
+from collections import deque
 
 import numpy as np
 from PIL import Image
@@ -66,8 +67,35 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
 # ------------------ Config ------------------
 CAMERA_INDEX = 0
-THRESHOLD = 65          # LBPH threshold (lower = stricter) - SET FOR BALANCED ACCURACY
+THRESHOLD = 58          # Balanced threshold for fewer false negatives in live recognition.
 TOTAL_EMPLOYEES = 10    # change later (will auto-calc with users table)
+RECOGNITION_WINDOW = 5
+REQUIRED_STABLE_MATCHES = 3
+VERIFY_MIN_CORR = 0.58
+VERIFY_MIN_GAP = 0.02
+MAX_VERIFY_SAMPLES_PER_USER = 8
+VERIFY_MAX_LBP_DIST = 0.95
+VERIFY_LBP_MARGIN = 0.01
+VERIFY_MIN_VOTES = 1
+FALLBACK_CONF_ACCEPT = 42.0
+AUTO_THRESHOLD_ENABLED = True
+AUTO_THRESHOLD_MIN = 45
+AUTO_THRESHOLD_MAX = 70
+AUTO_THRESHOLD_STEP_UP = 2
+AUTO_THRESHOLD_STEP_DOWN = 1
+AUTO_THRESHOLD_FAIL_TRIGGER = 10
+AUTO_THRESHOLD_SUCCESS_TRIGGER = 6
+RELAXED_MODE_FAIL_TRIGGER = 6
+RELAXED_CONF_MARGIN = 4
+RECOGNITION_HOLD_SECONDS = 1.5
+LIVE_SECONDARY_VERIFY = False
+MODEL_RELOAD_INTERVAL_SEC = 2.0
+FACE_DETECT_SCALE = 0.6
+RECOGNITION_DEBUG = False
+
+face_samples_cache = {}
+face_samples_cache_model_mtime = None
+recognizer_model_mtime = None
 
 # ------------------ OpenCV Setup ------------------
 
@@ -87,6 +115,210 @@ else:
 # ------------------ Database ------------------
 def get_db():
     return sqlite3.connect("database/attendance.db")
+
+
+def refresh_face_samples_cache():
+    """Load a small set of enrolled face images per user for second-stage verification."""
+    global face_samples_cache
+    global face_samples_cache_model_mtime
+
+    model_path = "TrainingImageLabel/Trainner.yml"
+    model_mtime = os.path.getmtime(model_path) if os.path.exists(model_path) else None
+
+    if face_samples_cache and face_samples_cache_model_mtime == model_mtime:
+        return
+
+    new_cache = {}
+    if os.path.exists("TrainingImage"):
+        for filename in sorted(os.listdir("TrainingImage")):
+            if not filename.endswith(".jpg") or not filename.startswith("User."):
+                continue
+
+            parts = filename.split(".")
+            if len(parts) < 4:
+                continue
+
+            try:
+                uid = int(parts[1])
+            except ValueError:
+                continue
+
+            user_samples = new_cache.setdefault(uid, [])
+            if len(user_samples) >= MAX_VERIFY_SAMPLES_PER_USER:
+                continue
+
+            img_path = os.path.join("TrainingImage", filename)
+            img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                continue
+            img = cv2.resize(img, (200, 200))
+            user_samples.append({
+                "img": img,
+                "hist": _gray_hist(img),
+                "lbp": _lbp_hist(img)
+            })
+
+    face_samples_cache = new_cache
+    face_samples_cache_model_mtime = model_mtime
+
+
+def verify_prediction_with_samples(face_roi_resized, predicted_user_id):
+    """
+    Verify predicted identity using histogram correlation against enrolled samples.
+    Returns (is_verified, same_user_best_corr, other_user_best_corr).
+    """
+    refresh_face_samples_cache()
+
+    predicted_samples = face_samples_cache.get(predicted_user_id, [])
+    if not predicted_samples:
+        return False, 0.0, 0.0, 999.0, 999.0, 999.0, 999.0, 0, None
+
+    probe_hist = _gray_hist(face_roi_resized)
+    probe_lbp = _lbp_hist(face_roi_resized)
+
+    user_stats = {}
+    for uid, samples in face_samples_cache.items():
+        best_corr = -1.0
+        best_lbp = 999.0
+        for sample in samples:
+            corr = cv2.compareHist(probe_hist, sample["hist"], cv2.HISTCMP_CORREL)
+            if corr > best_corr:
+                best_corr = corr
+
+            lbp_dist = cv2.compareHist(probe_lbp, sample["lbp"], cv2.HISTCMP_CHISQR)
+            if lbp_dist < best_lbp:
+                best_lbp = lbp_dist
+        user_stats[uid] = {"corr": best_corr, "lbp": best_lbp}
+
+    best_corr_uid = max(user_stats.items(), key=lambda kv: kv[1]["corr"])[0]
+    best_lbp_uid = min(user_stats.items(), key=lambda kv: kv[1]["lbp"])[0]
+    pred_corr = user_stats[predicted_user_id]["corr"]
+    pred_lbp = user_stats[predicted_user_id]["lbp"]
+
+    other_corr = max(v["corr"] for uid, v in user_stats.items() if uid != predicted_user_id) if len(user_stats) > 1 else -1.0
+    other_lbp = min(v["lbp"] for uid, v in user_stats.items() if uid != predicted_user_id) if len(user_stats) > 1 else 999.0
+
+    votes = 0
+    if best_corr_uid == predicted_user_id:
+        votes += 1
+    if best_lbp_uid == predicted_user_id:
+        votes += 1
+
+    is_verified = (
+        pred_corr >= VERIFY_MIN_CORR
+        and (pred_corr - other_corr) >= VERIFY_MIN_GAP
+        and pred_lbp <= VERIFY_MAX_LBP_DIST
+        and (other_lbp - pred_lbp) >= VERIFY_LBP_MARGIN
+        and votes >= VERIFY_MIN_VOTES
+    )
+
+    return (
+        is_verified,
+        pred_corr,
+        other_corr,
+        pred_lbp,
+        other_lbp,
+        999.0,
+        999.0,
+        votes,
+        {"corr_uid": best_corr_uid, "lbp_uid": best_lbp_uid}
+    )
+
+
+def _gray_hist(img):
+    hist = cv2.calcHist([img], [0], None, [256], [0, 256])
+    cv2.normalize(hist, hist)
+    return hist
+
+
+def _lbp_hist(img):
+    # Basic 8-neighbor LBP encoding and normalized 256-bin histogram.
+    center = img[1:-1, 1:-1]
+    lbp = np.zeros_like(center, dtype=np.uint8)
+    lbp |= (img[:-2, :-2] >= center).astype(np.uint8) << 7
+    lbp |= (img[:-2, 1:-1] >= center).astype(np.uint8) << 6
+    lbp |= (img[:-2, 2:] >= center).astype(np.uint8) << 5
+    lbp |= (img[1:-1, 2:] >= center).astype(np.uint8) << 4
+    lbp |= (img[2:, 2:] >= center).astype(np.uint8) << 3
+    lbp |= (img[2:, 1:-1] >= center).astype(np.uint8) << 2
+    lbp |= (img[2:, :-2] >= center).astype(np.uint8) << 1
+    lbp |= (img[1:-1, :-2] >= center).astype(np.uint8)
+    hist = cv2.calcHist([lbp], [0], None, [256], [0, 256])
+    cv2.normalize(hist, hist)
+    return hist
+
+
+def _orb_desc(img):
+    orb = cv2.ORB_create(300)
+    _, des = orb.detectAndCompute(img, None)
+    return des
+
+
+def _orb_mean_distance(des1, des2):
+    if des1 is None or des2 is None:
+        return 999.0
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    matches = bf.match(des1, des2)
+    if not matches:
+        return 999.0
+    matches = sorted(matches, key=lambda m: m.distance)
+    top = matches[:20]
+    return float(sum(m.distance for m in top) / len(top))
+
+
+def infer_user_id_from_face_image(image_rel_path):
+    """
+    Infer best user_id from saved check-in face image.
+    Returns user_id or None when inference is ambiguous.
+    """
+    if not image_rel_path:
+        return None
+
+    full_path = os.path.join("static", image_rel_path)
+    if not os.path.exists(full_path):
+        return None
+
+    refresh_face_samples_cache()
+    if not face_samples_cache:
+        return None
+
+    gray = cv2.imread(full_path, cv2.IMREAD_GRAYSCALE)
+    if gray is None:
+        return None
+    gray = cv2.resize(gray, (200, 200))
+
+    probe_hist = _gray_hist(gray)
+    probe_lbp = _lbp_hist(gray)
+
+    user_scores = []
+    for uid, samples in face_samples_cache.items():
+        best_corr = -1.0
+        best_lbp = 999.0
+        for sample in samples:
+            corr = cv2.compareHist(probe_hist, sample["hist"], cv2.HISTCMP_CORREL)
+            lbp = cv2.compareHist(probe_lbp, sample["lbp"], cv2.HISTCMP_CHISQR)
+            if corr > best_corr:
+                best_corr = corr
+            if lbp < best_lbp:
+                best_lbp = lbp
+        combined = best_corr - (0.30 * best_lbp)
+        user_scores.append((uid, best_corr, best_lbp, combined))
+
+    user_scores.sort(key=lambda x: x[3], reverse=True)
+    if not user_scores:
+        return None
+
+    best_uid, best_corr, best_lbp, best_combined = user_scores[0]
+    second_combined = user_scores[1][3] if len(user_scores) > 1 else -999.0
+
+    if best_corr < 0.68:
+        return None
+    if (best_combined - second_combined) < 0.05:
+        return None
+    if best_lbp > 0.70:
+        return None
+
+    return best_uid
 
 # ------------------ Attendance Logic ------------------
 def mark_attendance(user_id, face_image):
@@ -232,9 +464,28 @@ def generate_frames():
     global camera
     global last_attendance_time
 
+    global recognizer_model_mtime
+
+    # Keep a short rolling history so attendance is recorded only after stable identity.
+    recognition_history = deque(maxlen=RECOGNITION_WINDOW)
+    last_model_reload = 0.0
+    dynamic_threshold = THRESHOLD
+    no_match_streak = 0
+    stable_success_streak = 0
+    hold_until = 0.0
+    hold_user_name = ""
+    hold_status_text = ""
+    hold_status_subtext = ""
+    hold_status_color = (0, 255, 0)
+
     if camera is None:
-        camera = cv2.VideoCapture(CAMERA_INDEX)
+        if os.name == "nt":
+            camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
+        else:
+            camera = cv2.VideoCapture(CAMERA_INDEX)
         camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        camera.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
+        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
     while camera_enabled:
 
@@ -246,26 +497,57 @@ def generate_frames():
         frame = cv2.flip(frame, 1)
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+        small_gray = cv2.resize(gray, (0, 0), fx=FACE_DETECT_SCALE, fy=FACE_DETECT_SCALE)
+        faces_small = face_cascade.detectMultiScale(
+            small_gray,
+            scaleFactor=1.2,
+            minNeighbors=5,
+            minSize=(56, 56)
+        )
+        faces = []
+        for (sx, sy, sw, sh) in faces_small:
+            x = int(sx / FACE_DETECT_SCALE)
+            y = int(sy / FACE_DETECT_SCALE)
+            w = int(sw / FACE_DETECT_SCALE)
+            h = int(sh / FACE_DETECT_SCALE)
+            faces.append((x, y, w, h))
+        faces.sort(key=lambda f: f[2] * f[3], reverse=True)
+        total_faces_detected = len(faces)
+        if len(faces) > 1:
+            faces = faces[:1]
 
         status_text = "Detecting Face..."
+        status_subtext = "Keep one face centered for quick attendance."
         status_color = (0, 200, 255)
         user_name = ""
+        active_threshold = dynamic_threshold if AUTO_THRESHOLD_ENABLED else THRESHOLD
 
         recognized_faces = []
 
+        # Reload model only when needed to avoid frame lag.
+        model_loaded = False
+        try:
+            model_path = "TrainingImageLabel/Trainner.yml"
+            if os.path.exists(model_path):
+                mtime = os.path.getmtime(model_path)
+                now = time.time()
+                if (
+                    recognizer_model_mtime is None
+                    or mtime != recognizer_model_mtime
+                    or (now - last_model_reload) >= MODEL_RELOAD_INTERVAL_SEC
+                ):
+                    recognizer.read(model_path)
+                    recognizer_model_mtime = mtime
+                    last_model_reload = now
+                model_loaded = True
+        except Exception as e:
+            print(f"Warning: Could not reload recognizer model: {e}")
+
         for (x, y, w, h) in faces:
             face_roi = gray[y:y+h, x:x+w]
-            
-            # Force reload recognizer to get latest trained model
-            model_loaded = False
-            try:
-                if os.path.exists("TrainingImageLabel/Trainner.yml"):
-                    recognizer.read("TrainingImageLabel/Trainner.yml")
-                    model_loaded = True
-            except Exception as e:
-                print(f"Warning: Could not reload recognizer model: {e}")
-            
+            # Normalize illumination to reduce false "not recognized" in uneven lighting.
+            face_roi = cv2.equalizeHist(face_roi)
+
             # Skip prediction if model not available
             if not model_loaded:
                 box_color = (0, 140, 255)
@@ -278,12 +560,13 @@ def generate_frames():
             face_roi_resized = cv2.resize(face_roi, (200, 200))
             
             user_id, conf = recognizer.predict(face_roi_resized)
-            print(f"[RECOGNITION] Predicted user_id: {user_id}, confidence: {conf:.2f}")
+            if RECOGNITION_DEBUG:
+                print(f"[RECOGNITION] Predicted user_id: {user_id}, confidence: {conf:.2f}")
 
             box_color = (0, 0, 255)
             label = f"Unknown ({conf:.1f})"
 
-            if conf < THRESHOLD:
+            if conf < active_threshold:
                 db = get_db()
                 user_check = db.execute("""
                     SELECT id, name FROM users WHERE id = ?
@@ -293,68 +576,215 @@ def generate_frames():
                 if user_check:
                     detected_id = user_check[0]
                     detected_name = user_check[1]
-                    box_color = (0, 255, 0)
-                    label = f"ID: {detected_id} - {detected_name} ({conf:.1f})"
-                    print(f"[MATCH] User {detected_id} ({detected_name}) matched with confidence {conf:.2f}")
 
-                    face_image = frame[y:y+h, x:x+w].copy()
-                    recognized_faces.append({
-                        "user_id": user_id,
-                        "user_name": detected_name,
-                        "conf": conf,
-                        "face_image": face_image
-                    })
+                    # Default: in live mode prefer speed/reliability with LBPH + stable frame voting.
+                    is_verified = True
+                    votes = 1
+                    winners = {"mode": "lbph_stable"}
+                    same_corr = other_corr = same_lbp = other_lbp = same_orb = other_orb = 0.0
+
+                    # Optional strict secondary verification.
+                    if LIVE_SECONDARY_VERIFY:
+                        (
+                            is_verified,
+                            same_corr,
+                            other_corr,
+                            same_lbp,
+                            other_lbp,
+                            same_orb,
+                            other_orb,
+                            votes,
+                            winners
+                        ) = verify_prediction_with_samples(face_roi_resized, detected_id)
+
+                    fallback_ok = (conf <= FALLBACK_CONF_ACCEPT and votes >= 1)
+                    relaxed_ok = (
+                        total_faces_detected == 1
+                        and no_match_streak >= RELAXED_MODE_FAIL_TRIGGER
+                        and conf <= (active_threshold - RELAXED_CONF_MARGIN)
+                        and votes >= 1
+                    )
+
+                    if is_verified or fallback_ok or relaxed_ok:
+                        box_color = (0, 255, 0)
+                        label = f"ID: {detected_id} - {detected_name} ({conf:.1f})"
+                        if RECOGNITION_DEBUG:
+                            print(
+                                f"[MATCH] User {detected_id} ({detected_name}) conf={conf:.2f} "
+                                f"corr_same={same_corr:.3f} corr_other={other_corr:.3f} "
+                                f"lbp_same={same_lbp:.3f} lbp_other={other_lbp:.3f} "
+                                f"orb_same={same_orb:.2f} orb_other={other_orb:.2f} "
+                                f"votes={votes} winners={winners} fallback={fallback_ok} relaxed={relaxed_ok}"
+                            )
+
+                        face_image = frame[y:y+h, x:x+w].copy()
+                        recognized_faces.append({
+                            "user_id": user_id,
+                            "user_name": detected_name,
+                            "conf": conf,
+                            "face_image": face_image
+                        })
+                    else:
+                        box_color = (0, 165, 255)
+                        label = f"Uncertain match ({conf:.1f})"
+                        if RECOGNITION_DEBUG:
+                            print(
+                                f"[REJECTED] Pred={detected_id} conf={conf:.2f} "
+                                f"corr_same={same_corr:.3f} corr_other={other_corr:.3f} "
+                                f"lbp_same={same_lbp:.3f} lbp_other={other_lbp:.3f} "
+                                f"orb_same={same_orb:.2f} orb_other={other_orb:.2f} "
+                                f"votes={votes} winners={winners}"
+                            )
                 else:
                     label = f"Invalid ID {user_id} ({conf:.1f})"
 
             cv2.rectangle(frame, (x, y), (x+w, y+h), box_color, 2)
+
+            # High-contrast label background for readability.
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
+            label_x1 = x
+            label_y1 = max(8, y - th - 16)
+            label_x2 = min(frame.shape[1] - 8, x + tw + 14)
+            label_y2 = max(28, y - 4)
+            cv2.rectangle(frame, (label_x1, label_y1), (label_x2, label_y2), (12, 20, 28), -1)
             cv2.putText(frame,
                         label,
-                        (x, y - 10),
+                        (x + 6, label_y2 - 8),
                         cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
+                        0.58,
                         box_color,
                         2)
+
+        current_time = time.time()
 
         if len(recognized_faces) == 1:
             best_match = recognized_faces[0]
             user_name = best_match["user_name"]
-            status_text = f"Welcome {user_name}!"
-            status_color = (0, 255, 0)
-            
-            print(f"\n[ATTENDANCE_RECORD] Best face match detected:")
-            print(f"  User ID: {best_match['user_id']}")
-            print(f"  User Name: {user_name}")
-            print(f"  Confidence: {best_match['conf']:.2f}")
-            print(f"  THRESHOLD: {THRESHOLD}")
+            recognition_history.append({
+                "user_id": best_match["user_id"],
+                "user_name": user_name,
+                "conf": best_match["conf"],
+                "face_image": best_match["face_image"]
+            })
 
-            current_time = time.time()
-            if current_time - last_attendance_time > ATTENDANCE_COOLDOWN:
-                result = mark_attendance(best_match["user_id"], best_match["face_image"])
-                print(f"  Attendance recording result: {result}")
-                attendance_status = result
-                success_recognition += 1
-                last_attendance_time = current_time
-        elif len(recognized_faces) > 1:
+            stable_hits = [h for h in recognition_history if h["user_id"] == best_match["user_id"] and h["conf"] < active_threshold]
+
+            if len(stable_hits) >= REQUIRED_STABLE_MATCHES:
+                # Use the best-quality frame among stable hits.
+                final_hit = min(stable_hits, key=lambda h: h["conf"])
+                status_text = f"Verified: {final_hit['user_name']}"
+                status_subtext = "Attendance confirmed successfully."
+                status_color = (0, 255, 0)
+
+                print(f"\n[ATTENDANCE_RECORD] Stable match confirmed:")
+                print(f"  User ID: {final_hit['user_id']}")
+                print(f"  User Name: {final_hit['user_name']}")
+                print(f"  Best Confidence: {final_hit['conf']:.2f}")
+                print(f"  Stable Frames: {len(stable_hits)}/{REQUIRED_STABLE_MATCHES}")
+                print(f"  THRESHOLD: {active_threshold}")
+
+                if current_time - last_attendance_time > ATTENDANCE_COOLDOWN:
+                    result = mark_attendance(final_hit["user_id"], final_hit["face_image"])
+                    print(f"  Attendance recording result: {result}")
+                    attendance_status = result
+                    success_recognition += 1
+                    last_attendance_time = current_time
+                    recognition_history.clear()
+                    no_match_streak = 0
+                    stable_success_streak += 1
+                    if (
+                        AUTO_THRESHOLD_ENABLED
+                        and stable_success_streak >= AUTO_THRESHOLD_SUCCESS_TRIGGER
+                        and dynamic_threshold > AUTO_THRESHOLD_MIN
+                    ):
+                        dynamic_threshold = max(AUTO_THRESHOLD_MIN, dynamic_threshold - AUTO_THRESHOLD_STEP_DOWN)
+                        stable_success_streak = 0
+                hold_until = current_time + RECOGNITION_HOLD_SECONDS
+                hold_user_name = final_hit["user_name"]
+                hold_status_text = f"Verified: {final_hit['user_name']}"
+                hold_status_subtext = "Attendance confirmed successfully."
+                hold_status_color = (0, 255, 0)
+            else:
+                status_text = f"Verifying {user_name}... ({len(stable_hits)}/{REQUIRED_STABLE_MATCHES})"
+                status_subtext = "Hold still for a second."
+                status_color = (0, 200, 255)
+                no_match_streak = 0
+        elif total_faces_detected > 1:
             status_text = "Multiple recognized faces - show one face only"
+            status_subtext = "Ask others to step out of frame."
             status_color = (0, 140, 255)
             attendance_status = "multiple_faces"
+            recognition_history.clear()
+            stable_success_streak = 0
         elif len(faces) > 0:
             status_text = "Face not recognized"
+            status_subtext = "Try better light and look straight at camera."
             status_color = (0, 0, 255)
             attendance_status = "failed"
             failed_recognition += 1
+            recognition_history.clear()
+            stable_success_streak = 0
+            if total_faces_detected == 1:
+                no_match_streak += 1
+                if (
+                    AUTO_THRESHOLD_ENABLED
+                    and no_match_streak >= AUTO_THRESHOLD_FAIL_TRIGGER
+                    and dynamic_threshold < AUTO_THRESHOLD_MAX
+                ):
+                    dynamic_threshold = min(AUTO_THRESHOLD_MAX, dynamic_threshold + AUTO_THRESHOLD_STEP_UP)
+                    no_match_streak = 0
+        else:
+            recognition_history.clear()
+            stable_success_streak = 0
 
-        # Status text background
-        cv2.rectangle(frame, (10, 10), (600, 70), (0, 0, 0), -1)
+        # Smooth UI: keep verified identity visible for a short time to prevent flicker.
+        if current_time < hold_until:
+            status_text = hold_status_text or f"Verified: {hold_user_name}"
+            status_subtext = hold_status_subtext or "Attendance confirmed successfully."
+            status_color = hold_status_color
 
-        cv2.putText(frame,
-                    status_text,
-                    (20, 45),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    status_color,
-                    2)
+        # Centered, auto-sized status banner with stronger contrast.
+        fh, fw = frame.shape[:2]
+        title_font = cv2.FONT_HERSHEY_DUPLEX
+        sub_font = cv2.FONT_HERSHEY_DUPLEX
+        title_scale = 0.92
+        sub_scale = 0.58
+
+        (tw, th), _ = cv2.getTextSize(status_text, title_font, title_scale, 2)
+        (sw, sh), _ = cv2.getTextSize(status_subtext, sub_font, sub_scale, 1)
+
+        pad_x = 28
+        panel_w = max(tw, sw) + (pad_x * 2)
+        panel_h = th + sh + 40
+        panel_w = min(panel_w, fw - 24)
+
+        panel_x1 = max(12, (fw - panel_w) // 2)
+        panel_y1 = 14
+        panel_x2 = min(fw - 12, panel_x1 + panel_w)
+        panel_y2 = min(fh - 12, panel_y1 + panel_h)
+
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (panel_x1, panel_y1), (panel_x2, panel_y2), (8, 16, 24), -1)
+        frame = cv2.addWeighted(overlay, 0.78, frame, 0.22, 0)
+        cv2.rectangle(frame, (panel_x1, panel_y1), (panel_x2, panel_y2), (160, 186, 206), 1)
+
+        title_x = panel_x1 + max(18, (panel_w - tw) // 2)
+        title_y = panel_y1 + th + 12
+        sub_x = panel_x1 + max(18, (panel_w - sw) // 2)
+        sub_y = title_y + 28
+
+        cv2.putText(frame, status_text, (title_x, title_y), title_font, title_scale, (0, 0, 0), 4)
+        cv2.putText(frame, status_text, (title_x, title_y), title_font, title_scale, status_color, 2)
+        cv2.putText(frame, status_subtext, (sub_x, sub_y), sub_font, sub_scale, (224, 235, 245), 1)
+        cv2.putText(
+            frame,
+            f"Auto threshold: {active_threshold}",
+            (panel_x1 + 16, panel_y2 - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.47,
+            (168, 190, 210),
+            1
+        )
 
         _, buffer = cv2.imencode(".jpg", frame)
 
@@ -379,6 +809,7 @@ def train_model():
 
     faces = []
     ids = []
+    MIN_IMAGES_PER_USER = 8
 
     if not os.path.exists("TrainingImage"):
         os.makedirs("TrainingImage")
@@ -437,7 +868,31 @@ def train_model():
         print(f"❌ ERROR: No valid faces found for training!")
         return False
 
-    print(f"[TRAINING] Training model with {len(faces)} samples from {len(user_face_count)} users...")
+    # Avoid training identities that have too few samples (high mismatch risk).
+    eligible_user_ids = {uid for uid, count in user_face_count.items() if count >= MIN_IMAGES_PER_USER}
+    if not eligible_user_ids:
+        print(f"❌ ERROR: No users have enough samples. Need at least {MIN_IMAGES_PER_USER} images per user.")
+        return False
+
+    filtered_faces = []
+    filtered_ids = []
+    for face_img, uid in zip(faces, ids):
+        if uid in eligible_user_ids:
+            filtered_faces.append(face_img)
+            filtered_ids.append(uid)
+
+    skipped_users = {uid: cnt for uid, cnt in user_face_count.items() if uid not in eligible_user_ids}
+    if skipped_users:
+        print(f"⚠️ Skipping users with insufficient samples (<{MIN_IMAGES_PER_USER}): {skipped_users}")
+
+    faces = filtered_faces
+    ids = filtered_ids
+
+    if len(faces) == 0:
+        print("❌ ERROR: No eligible training samples after filtering.")
+        return False
+
+    print(f"[TRAINING] Training model with {len(faces)} samples from {len(eligible_user_ids)} users...")
 
     try:
         recognizer.train(faces, np.array(ids, dtype=np.int32))
@@ -498,7 +953,7 @@ def attendance():
     db = get_db()
 
     # Fetch all attendance records with user role
-    rows = db.execute("""
+    rows_raw = db.execute("""
         SELECT attendance.id,
                users.id,
                users.name,
@@ -516,6 +971,26 @@ def attendance():
         ORDER BY attendance.date DESC, attendance.checkin_time DESC
     """).fetchall()
 
+    users_map = {
+        r[0]: {"name": r[1], "role": r[2]}
+        for r in db.execute("SELECT id, name, role FROM users").fetchall()
+    }
+
+    corrected_rows = []
+    infer_cache = {}
+    for row in rows_raw:
+        row_list = list(row)
+        checkin_image = row_list[8]
+        if checkin_image:
+            if checkin_image not in infer_cache:
+                infer_cache[checkin_image] = infer_user_id_from_face_image(checkin_image)
+            inferred_uid = infer_cache[checkin_image]
+            if inferred_uid and inferred_uid in users_map and inferred_uid != row_list[1]:
+                row_list[1] = inferred_uid
+                row_list[2] = users_map[inferred_uid]["name"]
+                row_list[10] = users_map[inferred_uid]["role"]
+        corrected_rows.append(tuple(row_list))
+
     # Total users (all roles)
     total_users = db.execute("""
         SELECT COUNT(*) FROM users
@@ -532,7 +1007,7 @@ def attendance():
         WHERE attendance.date=?
     """, (today,)).fetchone()[0]
 
-    total_count = len(rows)
+    total_count = len(corrected_rows)
 
     percentage = 0
     if total_users > 0:
@@ -542,7 +1017,7 @@ def attendance():
 
     return render_template(
         "attendance.html",
-        rows=rows,
+        rows=corrected_rows,
         total_users=total_users,
         today_count=today_count,
         total_count=total_count,
@@ -754,21 +1229,38 @@ def enroll():
         role = request.form.get("role", "student")
         
         db = get_db()
-        
-        # Check if user already exists
+
         existing_user = db.execute("""
             SELECT id, name FROM users WHERE id = ?
         """, (user_id,)).fetchone()
-        
-        if existing_user:
+
+        training_images = [f for f in os.listdir("TrainingImage") if f.startswith(f"User.{user_id}.")] if os.path.exists("TrainingImage") else []
+
+        # If user exists and has images, they are already fully enrolled.
+        if existing_user and training_images:
             db.close()
             return jsonify({"status": "error", "message": f"User ID {user_id} already exists! This user is already enrolled."}), 400
-        
-        # Check if training images already exist for this user
-        training_images = [f for f in os.listdir("TrainingImage") if f.startswith(f"User.{user_id}.")] if os.path.exists("TrainingImage") else []
-        if training_images:
+
+        # If user exists but images are missing, allow retry enrollment with updated profile.
+        if existing_user and not training_images:
+            db.execute("""
+                UPDATE users SET name=?, role=? WHERE id=?
+            """, (name, role, user_id))
+            db.commit()
             db.close()
-            return jsonify({"status": "error", "message": f"Training images already exist for user ID {user_id}. This user cannot be re-enrolled."}), 400
+            return jsonify({
+                "status": "ok",
+                "message": "User exists without face data. Ready for face capture retry.",
+                "user_id": int(user_id)
+            })
+
+        # If user was deleted from DB but files remain, auto-clean orphan images and continue.
+        if (not existing_user) and training_images:
+            for img in training_images:
+                try:
+                    os.remove(os.path.join("TrainingImage", img))
+                except Exception:
+                    pass
         
         # Insert new user
         db.execute("""
@@ -778,7 +1270,12 @@ def enroll():
         db.commit()
         db.close()
 
-        return redirect(url_for("capture_faces", user_id=user_id))
+        # Return JSON for AJAX workflow; client triggers /capture separately
+        return jsonify({
+            "status": "ok",
+            "message": "User created. Ready for face capture.",
+            "user_id": int(user_id)
+        })
 
     return render_template("enroll.html")
 
@@ -794,10 +1291,14 @@ def check_user(user_id):
     # Check if training images exist
     training_images = [f for f in os.listdir("TrainingImage") if f.startswith(f"User.{user_id}.")] if os.path.exists("TrainingImage") else []
     
-    if existing_user or training_images:
-        return jsonify({"exists": True, "user_name": existing_user[1] if existing_user else "Unknown"})
-    else:
-        return jsonify({"exists": False})
+    if existing_user:
+        return jsonify({"exists": True, "user_name": existing_user[1], "orphan_images": False})
+
+    if training_images:
+        # Orphan images (DB row deleted manually) should not block enrollment.
+        return jsonify({"exists": False, "orphan_images": True})
+
+    return jsonify({"exists": False, "orphan_images": False})
 
 @app.route("/capture/<int:user_id>")
 def capture_faces(user_id):
@@ -812,13 +1313,26 @@ def capture_faces(user_id):
         except:
             pass
 
-    # Try to open camera with retries
+    # Try to open camera with retries.
+    # CAP_DSHOW only works on Windows; on Linux/macOS it can fail and prevent enrollment.
     cam = None
-    for attempt in range(3):
-        cam = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Use DirectShow backend on Windows
-        if cam.isOpened():
+    if os.name == "nt":
+        backend_candidates = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
+    else:
+        backend_candidates = [cv2.CAP_ANY]
+
+    for backend in backend_candidates:
+        for attempt in range(3):
+            cam = cv2.VideoCapture(0, backend)
+            if cam.isOpened():
+                break
+
+            if cam is not None:
+                cam.release()
+            time.sleep(0.3)
+
+        if cam is not None and cam.isOpened():
             break
-        time.sleep(0.3)
     
     if cam is None or not cam.isOpened():
         print("❌ ERROR: Could not access camera")
@@ -846,7 +1360,7 @@ def capture_faces(user_id):
     os.makedirs("TrainingImage", exist_ok=True)
     
     TARGET_IMAGES = 12  # Reduced from 20 for speed (still enough for training)
-    max_attempts = 150  # Max 150 frames = 5 seconds at 30fps (gives user time to position face)
+    max_attempts = 450  # Max ~15 seconds at 30fps (gives user enough time to position face)
     attempts = 0
     frame_skip = 0  # Capture every 2nd frame with face for variety
     no_face_count = 0  # Track frames without face detection
@@ -862,9 +1376,15 @@ def capture_faces(user_id):
             print(f"[ENROLLMENT] Warning: Failed to read frame {attempts}")
             continue
 
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gray_raw = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gray = cv2.equalizeHist(gray_raw)
         # Reduced minNeighbors from 5 to 3 for easier face detection
-        faces = face_detector.detectMultiScale(gray, 1.3, 3)
+        faces = face_detector.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=3, minSize=(80, 80))
+        if len(faces) == 0:
+            # Fallback pass on raw grayscale for cameras where equalization hurts detection.
+            faces = face_detector.detectMultiScale(gray_raw, scaleFactor=1.25, minNeighbors=4, minSize=(60, 60))
+        if len(faces) > 1:
+            faces = sorted(faces, key=lambda r: r[2] * r[3], reverse=True)
 
         if len(faces) > 0:
             no_face_count = 0  # Reset no-face counter
@@ -901,6 +1421,23 @@ def capture_faces(user_id):
     
     # Check if we got enough images
     if count < 8:
+        # Cleanup partial enrollment so user can retry immediately without manual DB edits.
+        try:
+            if os.path.exists("TrainingImage"):
+                for img_file in os.listdir("TrainingImage"):
+                    if img_file.startswith(f"User.{user_id}."):
+                        os.remove(os.path.join("TrainingImage", img_file))
+        except Exception:
+            pass
+
+        try:
+            db = get_db()
+            db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            db.commit()
+            db.close()
+        except Exception:
+            pass
+
         error_msg = f"Only captured {count}/{TARGET_IMAGES} images. Need at least 8."
         
         if count == 0:
@@ -1020,7 +1557,8 @@ def set_threshold():
     if not admin_required():
         return "Unauthorized", 403
 
-    THRESHOLD = int(request.form["threshold"])
+    requested = int(request.form["threshold"])
+    THRESHOLD = max(35, min(70, requested))
     return redirect("/admin")
 
 @app.route("/stats")
@@ -1846,3 +2384,4 @@ def clear_all_training():
 # ------------------ Main ------------------
 if __name__ == "__main__":
     app.run(debug=True)
+

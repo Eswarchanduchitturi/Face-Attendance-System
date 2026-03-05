@@ -1,41 +1,62 @@
 {% extends "base.html" %}
+{% block page_title %}Admin Complaints{% endblock %}
 {% block content %}
 
-<h4 class="mb-4">Manage Complaints</h4>
+<div class="admin-page">
+    <section class="page-head">
+        <h1>Complaints Desk</h1>
+        <p>Review open tickets and close them after resolution.</p>
+    </section>
 
-<table class="table table-hover">
-    <thead>
-        <tr>
-            <th>Category</th>
-            <th>Description</th>
-            <th>Status</th>
-            <th>Action</th>
-        </tr>
-    </thead>
+    <section class="frosted-card">
+        <div class="table-responsive">
+            <table class="table modern-table table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Description</th>
+                        <th>Status</th>
+                        <th width="130">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in complaints %}
+                    <tr>
+                        <td>{{ c[1] }}</td>
+                        <td>{{ c[2] }}</td>
+                        <td>
+                            <span class="badge bg-{{ 'success' if c[3]=='Closed' else 'warning' }}">
+                                {{ c[3] }}
+                            </span>
+                        </td>
+                        <td>
+                            {% if c[3] == 'Open' %}
+                            <a href="/admin/complaint/close/{{ c[0] }}" class="btn btn-sm btn-danger">
+                                Close
+                            </a>
+                            {% else %}
+                            <span class="text-success fw-semibold">Closed</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
 
-    <tbody>
-        {% for c in complaints %}
-        <tr>
-            <td>{{ c[1] }}</td>
-            <td>{{ c[2] }}</td>
-            <td>
-                <span class="badge bg-{{ 'success' if c[3]=='Closed' else 'warning' }}">
-                    {{ c[3] }}
-                </span>
-            </td>
-            <td>
-                {% if c[3] == 'Open' %}
-                <a href="/admin/complaint/close/{{ c[0] }}"
-                   class="btn btn-sm btn-danger">
-                    Close
-                </a>
-                {% else %}
-                ✔
-                {% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+<style>
+.admin-page { display: grid; gap: 14px; }
+.page-head h1 {
+    margin: 0;
+    font-family: "Sora", sans-serif;
+    font-size: 30px;
+}
+.page-head p {
+    margin: 5px 0 0;
+    color: #607483;
+}
+</style>
 
 {% endblock %}
