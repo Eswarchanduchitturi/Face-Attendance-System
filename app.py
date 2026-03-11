@@ -98,6 +98,7 @@ RECOGNITION_HOLD_SECONDS = 1.5
 LIVE_SECONDARY_VERIFY = False
 MODEL_RELOAD_INTERVAL_SEC = 2.0
 FACE_DETECT_SCALE = 0.6
+TARGET_STREAM_FPS = 12
 RECOGNITION_DEBUG = False
 MASK_AWARE_ENABLED = True
 MASK_THRESHOLD_BOOST = 8
@@ -114,6 +115,8 @@ IRIS_MIN_VOTES = 1
 face_samples_cache = {}
 face_samples_cache_model_mtime = None
 recognizer_model_mtime = None
+user_cache = {}
+user_cache_loaded_at = 0.0
 
 # ------------------ OpenCV Setup ------------------
 
@@ -133,6 +136,23 @@ else:
 # ------------------ Database ------------------
 def get_db():
     return sqlite3.connect("database/attendance.db")
+
+
+def get_user_cache(force_refresh=False):
+    global user_cache
+    global user_cache_loaded_at
+
+    now = time.time()
+    if not force_refresh and user_cache and (now - user_cache_loaded_at) < 10.0:
+        return user_cache
+
+    db = get_db()
+    rows = db.execute("SELECT id, name FROM users").fetchall()
+    db.close()
+
+    user_cache = {row[0]: row[1] for row in rows}
+    user_cache_loaded_at = now
+    return user_cache
 
 
 def refresh_face_samples_cache():
@@ -583,6 +603,7 @@ def mark_attendance(user_id, face_image):
     """, (user_id,)).fetchone()
     
     if not user_check:
+        get_user_cache(force_refresh=True)
         db.close()
         print(f"❌ [ERROR] Recognized user_id {user_id} does NOT exist in database!")
         print(f"   Valid user IDs in DB:")
@@ -707,6 +728,7 @@ def generate_frames():
     # Keep a short rolling history so attendance is recorded only after stable identity.
     recognition_history = deque(maxlen=RECOGNITION_WINDOW)
     last_model_reload = 0.0
+    last_model_check = 0.0
     dynamic_threshold = THRESHOLD
     no_match_streak = 0
     stable_success_streak = 0
@@ -726,6 +748,7 @@ def generate_frames():
         camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
     while camera_enabled:
+        loop_started_at = time.time()
 
         success, frame = camera.read()
         if not success:
@@ -767,19 +790,19 @@ def generate_frames():
         try:
             model_path = "TrainingImageLabel/Trainner.yml"
             if os.path.exists(model_path):
-                mtime = os.path.getmtime(model_path)
                 now = time.time()
-                if (
-                    recognizer_model_mtime is None
-                    or mtime != recognizer_model_mtime
-                    or (now - last_model_reload) >= MODEL_RELOAD_INTERVAL_SEC
-                ):
-                    recognizer.read(model_path)
-                    recognizer_model_mtime = mtime
-                    last_model_reload = now
+                if recognizer_model_mtime is None or (now - last_model_check) >= MODEL_RELOAD_INTERVAL_SEC:
+                    last_model_check = now
+                    mtime = os.path.getmtime(model_path)
+                    if recognizer_model_mtime is None or mtime != recognizer_model_mtime:
+                        recognizer.read(model_path)
+                        recognizer_model_mtime = mtime
+                        last_model_reload = now
                 model_loaded = True
         except Exception as e:
             print(f"Warning: Could not reload recognizer model: {e}")
+
+        users_by_id = get_user_cache()
 
         for (x, y, w, h) in faces:
             face_roi = gray[y:y+h, x:x+w]
@@ -816,11 +839,8 @@ def generate_frames():
                 conf_candidate = True
 
             if conf_candidate:
-                db = get_db()
-                user_check = db.execute("""
-                    SELECT id, name FROM users WHERE id = ?
-                """, (user_id,)).fetchone()
-                db.close()
+                detected_name = users_by_id.get(user_id)
+                user_check = (user_id, detected_name) if detected_name else None
 
                 if user_check:
                     detected_id = user_check[0]
@@ -1131,6 +1151,10 @@ def generate_frames():
         yield (b"--frame\r\n"
                b"Content-Type: image/jpeg\r\n\r\n" +
                buffer.tobytes() + b"\r\n")
+
+        frame_delay = (1.0 / TARGET_STREAM_FPS) - (time.time() - loop_started_at)
+        if frame_delay > 0:
+            time.sleep(frame_delay)
 
     # Release camera when stopped
     if camera is not None:

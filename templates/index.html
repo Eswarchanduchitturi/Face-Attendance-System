@@ -379,13 +379,12 @@ function stopAttendanceCheck() {
 }
 
 function handleAttendanceStatus(status) {
-    if (status === "checkin_success") {
+    if (status.startsWith("checkin_success")) {
         showAlertCard("Check-In Successful", "Your attendance has been recorded", "✓");
         stopAttendanceCheck();
         setTimeout(() => cameraOff(), 2000);
     } else if (status.startsWith("checkout_success")) {
-        const hrs = status.split("_")[2];
-        showAlertCard("Check-Out Successful", `Worked: ${hrs} hours`, "✓");
+        showAlertCard("Check-Out Successful", "Your checkout has been recorded", "✓");
         stopAttendanceCheck();
         setTimeout(() => cameraOff(), 2000);
     } else if (status === "already_checked_in") {
