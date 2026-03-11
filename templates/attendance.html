@@ -10,7 +10,7 @@
             <p class="attendance-subtitle">Real-time unified attendance records for all users</p>
         </div>
         <div class="header-actions">
-            <a href="/download/pdf" class="btn-action">📥 Download Report</a>
+            <a href="/download/pdf" id="downloadReportBtn" class="btn-action">📥 Download Detailed Report</a>
         </div>
     </div>
 
@@ -625,6 +625,21 @@ function applyFilters() {
         
         row.style.display = (matchesRole && matchesSearch && matchesDate) ? "" : "none";
     });
+
+    updateDownloadLink();
+}
+
+/* ================= DOWNLOAD FILTER LINK ================= */
+function updateDownloadLink() {
+    const downloadBtn = document.getElementById("downloadReportBtn");
+    const rawSearchValue = document.getElementById("searchInput").value.trim();
+    const isNumericUserId = /^\d+$/.test(rawSearchValue);
+
+    if (isNumericUserId) {
+        downloadBtn.href = `/download/pdf?user_id=${encodeURIComponent(rawSearchValue)}`;
+    } else {
+        downloadBtn.href = "/download/pdf";
+    }
 }
 
 /* ================= IMAGE MODAL ================= */
@@ -726,6 +741,9 @@ fetch("/stats/performance")
         });
     })
     .catch(e => console.error("Error loading performance chart:", e));
+
+// Ensure the download link is correct on initial page load.
+updateDownloadLink();
 
 </script>
 

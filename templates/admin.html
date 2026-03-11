@@ -54,6 +54,85 @@
     </section>
 
     <section class="frosted-card mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="card-title mb-0">Mask Recognition Tuning</div>
+            {% if request.args.get('msg') == 'mask_saved' %}
+            <span class="badge text-bg-success">Saved</span>
+            {% elif request.args.get('msg') == 'mask_invalid' %}
+            <span class="badge text-bg-danger">Invalid Input</span>
+            {% endif %}
+        </div>
+        <form action="/set_mask_config" method="post">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="mask_enabled" name="mask_enabled"
+                               {% if mask_aware_enabled %}checked{% endif %}>
+                        <label class="form-check-label" for="mask_enabled">Enable Mask Aware Mode</label>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">Confidence Boost</label>
+                    <input type="number" class="form-control" name="mask_threshold_boost" min="0" max="20"
+                           value="{{ mask_threshold_boost }}" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">Stable Frames (Mask)</label>
+                    <input type="number" class="form-control" name="mask_stable_matches" min="2" max="8"
+                           value="{{ mask_required_stable_matches }}" required>
+                </div>
+                <div class="col-md-3">
+                    <button class="btn btn-primary w-100" type="submit">
+                        <i class="fa-solid fa-floppy-disk me-1"></i> Save Mask Config
+                    </button>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">Min Upper Corr</label>
+                    <input type="number" step="0.01" class="form-control" name="mask_min_upper_corr" min="0.20" max="0.95"
+                           value="{{ mask_min_upper_corr }}" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">Min Corr Gap</label>
+                    <input type="number" step="0.001" class="form-control" name="mask_min_upper_gap" min="0" max="0.2"
+                           value="{{ mask_min_upper_gap }}" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">Max Upper LBP Dist</label>
+                    <input type="number" step="0.01" class="form-control" name="mask_max_upper_lbp" min="0.2" max="3.5"
+                           value="{{ mask_max_upper_lbp_dist }}" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">Min LBP Margin</label>
+                    <input type="number" step="0.001" class="form-control" name="mask_min_upper_lbp_margin" min="0" max="0.5"
+                           value="{{ mask_min_upper_lbp_margin }}" required>
+                </div>
+                <div class="col-md-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="iris_enabled" name="iris_enabled"
+                               {% if iris_verify_enabled %}checked{% endif %}>
+                        <label class="form-check-label" for="iris_enabled">Enable Iris Verify</label>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">Iris Min Score</label>
+                    <input type="number" step="0.01" class="form-control" name="iris_min_score" min="-0.2" max="1.0"
+                           value="{{ iris_min_score }}" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">Iris Min Gap</label>
+                    <input type="number" step="0.001" class="form-control" name="iris_min_gap" min="0" max="0.3"
+                           value="{{ iris_min_gap }}" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">Iris Min Votes</label>
+                    <input type="number" class="form-control" name="iris_min_votes" min="1" max="2"
+                           value="{{ iris_min_votes }}" required>
+                </div>
+            </div>
+        </form>
+    </section>
+
+    <section class="frosted-card mb-3">
         <div class="row g-3 align-items-end">
             <div class="col-md-3">
                 <label class="form-label small mb-1">Date Filter</label>

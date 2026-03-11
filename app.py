@@ -6,11 +6,14 @@ import datetime
 import os
 import io
 import math
+import threading
+import uuid
 from collections import deque
 
 import numpy as np
 from PIL import Image
 import time
+from routes.training import create_training_blueprint
 
 
 
@@ -58,6 +61,10 @@ ATTENDANCE_COOLDOWN = 3  # seconds
 
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.lib.units import inch
 from flask import session
 
 
@@ -92,6 +99,17 @@ LIVE_SECONDARY_VERIFY = False
 MODEL_RELOAD_INTERVAL_SEC = 2.0
 FACE_DETECT_SCALE = 0.6
 RECOGNITION_DEBUG = False
+MASK_AWARE_ENABLED = True
+MASK_THRESHOLD_BOOST = 8
+MASK_REQUIRED_STABLE_MATCHES = 4
+MASK_MIN_UPPER_CORR = 0.50
+MASK_MIN_UPPER_GAP = 0.015
+MASK_MAX_UPPER_LBP_DIST = 1.20
+MASK_MIN_UPPER_LBP_MARGIN = 0.005
+IRIS_VERIFY_ENABLED = True
+IRIS_MIN_SCORE = 0.26
+IRIS_MIN_GAP = 0.015
+IRIS_MIN_VOTES = 1
 
 face_samples_cache = {}
 face_samples_cache_model_mtime = None
@@ -152,10 +170,15 @@ def refresh_face_samples_cache():
             if img is None:
                 continue
             img = cv2.resize(img, (200, 200))
+            upper = _extract_upper_face(img)
+            iris_sig = _extract_iris_signature(img)
             user_samples.append({
                 "img": img,
                 "hist": _gray_hist(img),
-                "lbp": _lbp_hist(img)
+                "lbp": _lbp_hist(img),
+                "upper_hist": _gray_hist(upper),
+                "upper_lbp": _lbp_hist(upper),
+                "iris_sig": iris_sig
             })
 
     face_samples_cache = new_cache
@@ -246,6 +269,221 @@ def _lbp_hist(img):
     hist = cv2.calcHist([lbp], [0], None, [256], [0, 256])
     cv2.normalize(hist, hist)
     return hist
+
+
+def _extract_upper_face(img):
+    """Use upper-face band (eyes/forehead) for mask-aware verification."""
+    h = img.shape[0]
+    upper_end = max(90, int(h * 0.62))
+    upper = img[:upper_end, :]
+    return cv2.resize(upper, (200, 120))
+
+
+def _edge_density(img):
+    edges = cv2.Canny(img, 70, 140)
+    return float(np.count_nonzero(edges)) / float(edges.size)
+
+
+def detect_probable_mask(face_roi_resized):
+    """
+    Heuristic mask detector:
+    lower-half cloth masks are usually smoother and less textured than upper face.
+    """
+    h = face_roi_resized.shape[0]
+    split = int(h * 0.58)
+    upper = face_roi_resized[:split, :]
+    lower = face_roi_resized[split:, :]
+
+    upper_var = float(np.var(upper))
+    lower_var = float(np.var(lower))
+    upper_edges = _edge_density(upper)
+    lower_edges = _edge_density(lower)
+
+    texture_ratio = lower_var / (upper_var + 1e-6)
+    edge_ratio = lower_edges / (upper_edges + 1e-6)
+
+    return (
+        texture_ratio < 0.72
+        and edge_ratio < 0.72
+        and lower_var < 1050
+    )
+
+
+def _extract_iris_signature(face_roi_resized):
+    """
+    Build a lightweight periocular signature from eye regions.
+    Returns None if reliable eyes are not found.
+    """
+    upper = _extract_upper_face(face_roi_resized)
+    eyes = eye_cascade.detectMultiScale(
+        upper,
+        scaleFactor=1.1,
+        minNeighbors=4,
+        minSize=(20, 12)
+    )
+    if len(eyes) == 0:
+        return None
+
+    eyes = sorted(eyes, key=lambda e: e[2] * e[3], reverse=True)[:2]
+    eye_features = []
+    for (ex, ey, ew, eh) in sorted(eyes, key=lambda e: e[0]):
+        eye_patch = upper[ey:ey + eh, ex:ex + ew]
+        if eye_patch.size == 0:
+            continue
+        eye_patch = cv2.equalizeHist(eye_patch)
+        eye_patch = cv2.resize(eye_patch, (64, 32))
+        eye_features.append({
+            "gray": _gray_hist(eye_patch),
+            "lbp": _lbp_hist(eye_patch)
+        })
+
+    if len(eye_features) == 0:
+        return None
+
+    if len(eye_features) == 1:
+        avg_gray = eye_features[0]["gray"]
+        avg_lbp = eye_features[0]["lbp"]
+    else:
+        avg_gray = cv2.addWeighted(eye_features[0]["gray"], 0.5, eye_features[1]["gray"], 0.5, 0)
+        avg_lbp = cv2.addWeighted(eye_features[0]["lbp"], 0.5, eye_features[1]["lbp"], 0.5, 0)
+
+    return {"gray": avg_gray, "lbp": avg_lbp}
+
+
+def verify_prediction_with_iris(face_roi_resized, predicted_user_id):
+    """
+    Verify identity with periocular/iris-like texture signatures.
+    Returns (is_verified, pred_score, other_score, pred_lbp, other_lbp, votes, winners).
+    """
+    refresh_face_samples_cache()
+
+    probe_sig = _extract_iris_signature(face_roi_resized)
+    if probe_sig is None:
+        return False, -1.0, -1.0, 999.0, 999.0, 0, {"mode": "iris_no_probe"}
+
+    predicted_samples = face_samples_cache.get(predicted_user_id, [])
+    if not predicted_samples:
+        return False, -1.0, -1.0, 999.0, 999.0, 0, {"mode": "iris_no_samples"}
+
+    user_stats = {}
+    for uid, samples in face_samples_cache.items():
+        best_score = -1.0
+        best_corr = -1.0
+        best_lbp = 999.0
+
+        for sample in samples:
+            iris_sig = sample.get("iris_sig")
+            if iris_sig is None:
+                continue
+
+            corr = cv2.compareHist(probe_sig["gray"], iris_sig["gray"], cv2.HISTCMP_CORREL)
+            lbp_dist = cv2.compareHist(probe_sig["lbp"], iris_sig["lbp"], cv2.HISTCMP_CHISQR)
+            score = corr - (0.24 * lbp_dist)
+
+            if score > best_score:
+                best_score = score
+            if corr > best_corr:
+                best_corr = corr
+            if lbp_dist < best_lbp:
+                best_lbp = lbp_dist
+
+        if best_score > -1.0:
+            user_stats[uid] = {"score": best_score, "corr": best_corr, "lbp": best_lbp}
+
+    if predicted_user_id not in user_stats:
+        return False, -1.0, -1.0, 999.0, 999.0, 0, {"mode": "iris_pred_missing"}
+
+    best_score_uid = max(user_stats.items(), key=lambda kv: kv[1]["score"])[0]
+    best_lbp_uid = min(user_stats.items(), key=lambda kv: kv[1]["lbp"])[0]
+
+    pred_score = user_stats[predicted_user_id]["score"]
+    pred_lbp = user_stats[predicted_user_id]["lbp"]
+    other_score = max(v["score"] for uid, v in user_stats.items() if uid != predicted_user_id) if len(user_stats) > 1 else -1.0
+    other_lbp = min(v["lbp"] for uid, v in user_stats.items() if uid != predicted_user_id) if len(user_stats) > 1 else 999.0
+
+    votes = 0
+    if best_score_uid == predicted_user_id:
+        votes += 1
+    if best_lbp_uid == predicted_user_id:
+        votes += 1
+
+    is_verified = (
+        pred_score >= IRIS_MIN_SCORE
+        and (pred_score - other_score) >= IRIS_MIN_GAP
+        and votes >= IRIS_MIN_VOTES
+    )
+
+    return (
+        is_verified,
+        pred_score,
+        other_score,
+        pred_lbp,
+        other_lbp,
+        votes,
+        {"mode": "iris_verify", "score_uid": best_score_uid, "lbp_uid": best_lbp_uid}
+    )
+
+
+def verify_prediction_with_upper_samples(face_roi_resized, predicted_user_id):
+    """
+    Verify identity using only upper-face features for masked-face fallback.
+    Returns (is_verified, pred_corr, other_corr, pred_lbp, other_lbp, votes, winners).
+    """
+    refresh_face_samples_cache()
+
+    predicted_samples = face_samples_cache.get(predicted_user_id, [])
+    if not predicted_samples:
+        return False, 0.0, 0.0, 999.0, 999.0, 0, None
+
+    upper_probe = _extract_upper_face(face_roi_resized)
+    probe_hist = _gray_hist(upper_probe)
+    probe_lbp = _lbp_hist(upper_probe)
+
+    user_stats = {}
+    for uid, samples in face_samples_cache.items():
+        best_corr = -1.0
+        best_lbp = 999.0
+        for sample in samples:
+            corr = cv2.compareHist(probe_hist, sample["upper_hist"], cv2.HISTCMP_CORREL)
+            if corr > best_corr:
+                best_corr = corr
+
+            lbp_dist = cv2.compareHist(probe_lbp, sample["upper_lbp"], cv2.HISTCMP_CHISQR)
+            if lbp_dist < best_lbp:
+                best_lbp = lbp_dist
+
+        user_stats[uid] = {"corr": best_corr, "lbp": best_lbp}
+
+    best_corr_uid = max(user_stats.items(), key=lambda kv: kv[1]["corr"])[0]
+    best_lbp_uid = min(user_stats.items(), key=lambda kv: kv[1]["lbp"])[0]
+    pred_corr = user_stats[predicted_user_id]["corr"]
+    pred_lbp = user_stats[predicted_user_id]["lbp"]
+    other_corr = max(v["corr"] for uid, v in user_stats.items() if uid != predicted_user_id) if len(user_stats) > 1 else -1.0
+    other_lbp = min(v["lbp"] for uid, v in user_stats.items() if uid != predicted_user_id) if len(user_stats) > 1 else 999.0
+
+    votes = 0
+    if best_corr_uid == predicted_user_id:
+        votes += 1
+    if best_lbp_uid == predicted_user_id:
+        votes += 1
+
+    is_verified = (
+        pred_corr >= MASK_MIN_UPPER_CORR
+        and (pred_corr - other_corr) >= MASK_MIN_UPPER_GAP
+        and pred_lbp <= MASK_MAX_UPPER_LBP_DIST
+        and (other_lbp - pred_lbp) >= MASK_MIN_UPPER_LBP_MARGIN
+        and votes >= 1
+    )
+
+    return (
+        is_verified,
+        pred_corr,
+        other_corr,
+        pred_lbp,
+        other_lbp,
+        votes,
+        {"corr_uid": best_corr_uid, "lbp_uid": best_lbp_uid}
+    )
 
 
 def _orb_desc(img):
@@ -493,8 +731,8 @@ def generate_frames():
         if not success:
             break
 
-        # Mirror camera (front camera style)
-        frame = cv2.flip(frame, 1)
+        # Keep live recognition orientation consistent with enrollment capture.
+        # Mirroring here causes model mismatch if enrollment images are not mirrored.
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         small_gray = cv2.resize(gray, (0, 0), fx=FACE_DETECT_SCALE, fy=FACE_DETECT_SCALE)
@@ -558,6 +796,7 @@ def generate_frames():
             
             # CRITICAL: Resize face to match training image dimensions (200x200)
             face_roi_resized = cv2.resize(face_roi, (200, 200))
+            mask_suspected = MASK_AWARE_ENABLED and detect_probable_mask(face_roi_resized)
             
             user_id, conf = recognizer.predict(face_roi_resized)
             if RECOGNITION_DEBUG:
@@ -565,8 +804,18 @@ def generate_frames():
 
             box_color = (0, 0, 255)
             label = f"Unknown ({conf:.1f})"
+            effective_threshold = active_threshold
+            is_mask_mode = False
 
-            if conf < active_threshold:
+            conf_candidate = conf < active_threshold
+            if (
+                MASK_AWARE_ENABLED
+                and mask_suspected
+                and conf < (active_threshold + MASK_THRESHOLD_BOOST)
+            ):
+                conf_candidate = True
+
+            if conf_candidate:
                 db = get_db()
                 user_check = db.execute("""
                     SELECT id, name FROM users WHERE id = ?
@@ -605,9 +854,75 @@ def generate_frames():
                         and votes >= 1
                     )
 
-                    if is_verified or fallback_ok or relaxed_ok:
+                    accepted = (is_verified or fallback_ok or relaxed_ok)
+                    iris_verified = False
+
+                    if (
+                        not accepted
+                        and MASK_AWARE_ENABLED
+                        and mask_suspected
+                        and conf < (active_threshold + MASK_THRESHOLD_BOOST)
+                    ):
+                        (
+                            upper_verified,
+                            upper_same_corr,
+                            upper_other_corr,
+                            upper_same_lbp,
+                            upper_other_lbp,
+                            upper_votes,
+                            upper_winners
+                        ) = verify_prediction_with_upper_samples(face_roi_resized, detected_id)
+
+                        if upper_verified:
+                            accepted = True
+                            is_mask_mode = True
+                            effective_threshold = active_threshold + MASK_THRESHOLD_BOOST
+                            winners = {
+                                "mode": "mask_upper_verify",
+                                "upper_votes": upper_votes,
+                                "upper_winners": upper_winners,
+                                "upper_corr_same": round(upper_same_corr, 4),
+                                "upper_corr_other": round(upper_other_corr, 4),
+                                "upper_lbp_same": round(upper_same_lbp, 4),
+                                "upper_lbp_other": round(upper_other_lbp, 4),
+                            }
+
+                    if not accepted and IRIS_VERIFY_ENABLED:
+                        (
+                            iris_verified,
+                            iris_pred_score,
+                            iris_other_score,
+                            iris_pred_lbp,
+                            iris_other_lbp,
+                            iris_votes,
+                            iris_winners
+                        ) = verify_prediction_with_iris(face_roi_resized, detected_id)
+
+                        if iris_verified:
+                            accepted = True
+                            is_mask_mode = bool(mask_suspected)
+                            if mask_suspected:
+                                effective_threshold = active_threshold + MASK_THRESHOLD_BOOST
+                            winners = {
+                                "mode": "iris_verify",
+                                "iris_votes": iris_votes,
+                                "iris_pred_score": round(iris_pred_score, 4),
+                                "iris_other_score": round(iris_other_score, 4),
+                                "iris_pred_lbp": round(iris_pred_lbp, 4),
+                                "iris_other_lbp": round(iris_other_lbp, 4),
+                                "iris_winners": iris_winners
+                            }
+
+                    if accepted:
                         box_color = (0, 255, 0)
-                        label = f"ID: {detected_id} - {detected_name} ({conf:.1f})"
+                        if iris_verified and is_mask_mode:
+                            label = f"ID: {detected_id} - {detected_name} [MASK+IRIS] ({conf:.1f})"
+                        elif iris_verified:
+                            label = f"ID: {detected_id} - {detected_name} [IRIS] ({conf:.1f})"
+                        elif is_mask_mode:
+                            label = f"ID: {detected_id} - {detected_name} [MASK] ({conf:.1f})"
+                        else:
+                            label = f"ID: {detected_id} - {detected_name} ({conf:.1f})"
                         if RECOGNITION_DEBUG:
                             print(
                                 f"[MATCH] User {detected_id} ({detected_name}) conf={conf:.2f} "
@@ -622,7 +937,9 @@ def generate_frames():
                             "user_id": user_id,
                             "user_name": detected_name,
                             "conf": conf,
-                            "face_image": face_image
+                            "face_image": face_image,
+                            "effective_threshold": effective_threshold,
+                            "mask_mode": is_mask_mode
                         })
                     else:
                         box_color = (0, 165, 255)
@@ -660,27 +977,44 @@ def generate_frames():
         if len(recognized_faces) == 1:
             best_match = recognized_faces[0]
             user_name = best_match["user_name"]
+            required_stable_matches = (
+                MASK_REQUIRED_STABLE_MATCHES
+                if best_match.get("mask_mode")
+                else REQUIRED_STABLE_MATCHES
+            )
             recognition_history.append({
                 "user_id": best_match["user_id"],
                 "user_name": user_name,
                 "conf": best_match["conf"],
-                "face_image": best_match["face_image"]
+                "face_image": best_match["face_image"],
+                "effective_threshold": best_match.get("effective_threshold", active_threshold),
+                "mask_mode": best_match.get("mask_mode", False)
             })
 
-            stable_hits = [h for h in recognition_history if h["user_id"] == best_match["user_id"] and h["conf"] < active_threshold]
+            stable_hits = [
+                h for h in recognition_history
+                if (
+                    h["user_id"] == best_match["user_id"]
+                    and h["conf"] < h.get("effective_threshold", active_threshold)
+                    and h.get("mask_mode", False) == best_match.get("mask_mode", False)
+                )
+            ]
 
-            if len(stable_hits) >= REQUIRED_STABLE_MATCHES:
+            if len(stable_hits) >= required_stable_matches:
                 # Use the best-quality frame among stable hits.
                 final_hit = min(stable_hits, key=lambda h: h["conf"])
                 status_text = f"Verified: {final_hit['user_name']}"
-                status_subtext = "Attendance confirmed successfully."
+                if final_hit.get("mask_mode"):
+                    status_subtext = "Masked-face verified. Attendance confirmed."
+                else:
+                    status_subtext = "Attendance confirmed successfully."
                 status_color = (0, 255, 0)
 
                 print(f"\n[ATTENDANCE_RECORD] Stable match confirmed:")
                 print(f"  User ID: {final_hit['user_id']}")
                 print(f"  User Name: {final_hit['user_name']}")
                 print(f"  Best Confidence: {final_hit['conf']:.2f}")
-                print(f"  Stable Frames: {len(stable_hits)}/{REQUIRED_STABLE_MATCHES}")
+                print(f"  Stable Frames: {len(stable_hits)}/{required_stable_matches}")
                 print(f"  THRESHOLD: {active_threshold}")
 
                 if current_time - last_attendance_time > ATTENDANCE_COOLDOWN:
@@ -702,11 +1036,17 @@ def generate_frames():
                 hold_until = current_time + RECOGNITION_HOLD_SECONDS
                 hold_user_name = final_hit["user_name"]
                 hold_status_text = f"Verified: {final_hit['user_name']}"
-                hold_status_subtext = "Attendance confirmed successfully."
+                if final_hit.get("mask_mode"):
+                    hold_status_subtext = "Masked-face verified. Attendance confirmed."
+                else:
+                    hold_status_subtext = "Attendance confirmed successfully."
                 hold_status_color = (0, 255, 0)
             else:
-                status_text = f"Verifying {user_name}... ({len(stable_hits)}/{REQUIRED_STABLE_MATCHES})"
-                status_subtext = "Hold still for a second."
+                status_text = f"Verifying {user_name}... ({len(stable_hits)}/{required_stable_matches})"
+                if best_match.get("mask_mode"):
+                    status_subtext = "Mask detected: hold still slightly longer."
+                else:
+                    status_subtext = "Hold still for a second."
                 status_color = (0, 200, 255)
                 no_match_streak = 0
         elif total_faces_detected > 1:
@@ -858,6 +1198,9 @@ def train_model():
             
             faces.append(resized_img)
             ids.append(user_id)
+            # Add a mirrored copy so prediction remains stable even if camera feed is flipped.
+            faces.append(cv2.flip(resized_img, 1))
+            ids.append(user_id)
             
             user_face_count[user_id] = user_face_count.get(user_id, 0) + 1
                 
@@ -905,6 +1248,137 @@ def train_model():
     except Exception as e:
         print(f"❌ Training error: {str(e)}")
         return False
+
+
+def reload_recognizer_from_disk():
+    """Reload latest trained model into memory."""
+    global recognizer
+
+    model_path = "TrainingImageLabel/Trainner.yml"
+    if not os.path.exists(model_path):
+        raise FileNotFoundError("Trained model not found on disk.")
+
+    new_recognizer = cv2.face.LBPHFaceRecognizer_create()
+    new_recognizer.read(model_path)
+    recognizer = new_recognizer
+    refresh_face_samples_cache()
+
+
+class TrainingJobManager:
+    """Simple in-process background training job manager."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._jobs = {}
+        self._active_job_id = None
+
+    def start_job(self, include_smoke_test=False):
+        with self._lock:
+            if self._active_job_id:
+                active = self._jobs.get(self._active_job_id, {})
+                if active.get("status") in ("queued", "running"):
+                    return self._active_job_id
+
+            job_id = str(uuid.uuid4())
+            self._jobs[job_id] = {
+                "id": job_id,
+                "status": "queued",
+                "progress": 0,
+                "stage": "queued",
+                "message": "Training job queued",
+                "include_smoke_test": include_smoke_test,
+                "created_at": time.time(),
+                "started_at": None,
+                "finished_at": None,
+                "error": None,
+            }
+            self._active_job_id = job_id
+
+        worker = threading.Thread(
+            target=self._run_job,
+            args=(job_id,),
+            daemon=True
+        )
+        worker.start()
+        return job_id
+
+    def get_job(self, job_id):
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return dict(job) if job else None
+
+    def get_active_job(self):
+        with self._lock:
+            if not self._active_job_id:
+                return None
+            active = self._jobs.get(self._active_job_id)
+            return dict(active) if active else None
+
+    def _update_job(self, job_id, **updates):
+        with self._lock:
+            if job_id in self._jobs:
+                self._jobs[job_id].update(updates)
+
+    def _run_job(self, job_id):
+        try:
+            self._update_job(
+                job_id,
+                status="running",
+                stage="precheck",
+                progress=10,
+                message="Validating training dataset",
+                started_at=time.time(),
+            )
+
+            success = train_model()
+            if not success:
+                raise RuntimeError("Training failed. Check image quality and sample count per user.")
+
+            self._update_job(
+                job_id,
+                stage="model_reload",
+                progress=80,
+                message="Reloading recognition model",
+            )
+            reload_recognizer_from_disk()
+
+            job = self.get_job(job_id) or {}
+            if job.get("include_smoke_test"):
+                self._update_job(
+                    job_id,
+                    stage="smoke_test",
+                    progress=92,
+                    message="Running model smoke test",
+                )
+                if not os.path.exists("TrainingImageLabel/Trainner.yml"):
+                    raise RuntimeError("Model smoke test failed: model file missing.")
+
+            self._update_job(
+                job_id,
+                status="success",
+                stage="completed",
+                progress=100,
+                message="Training completed successfully",
+                finished_at=time.time(),
+            )
+        except Exception as e:
+            self._update_job(
+                job_id,
+                status="fail",
+                stage="failed",
+                progress=100,
+                message="Training failed",
+                error=str(e),
+                finished_at=time.time(),
+            )
+        finally:
+            with self._lock:
+                if self._active_job_id == job_id:
+                    self._active_job_id = None
+
+
+training_jobs = TrainingJobManager()
+app.register_blueprint(create_training_blueprint(training_jobs))
 
 def eye_aspect_ratio(landmarks, left_eye, right_eye):
     def distance(p1, p2):
@@ -1182,43 +1656,192 @@ def attendance_analytics():
 
 @app.route("/download/pdf")
 def download_pdf():
+    user_id_filter = request.args.get("user_id", "").strip()
+
     db = get_db()
-    rows = db.execute("""
+    
+    # Fetch monthly summary statistics
+    monthly_query = """
         SELECT attendance.emp_id,
-               COALESCE(users.name, 'Unknown'),
-               attendance.date,
-               attendance.checkin_time,
-               attendance.checkout_time,
-               attendance.worked_hours
+               COALESCE(users.name, 'Unknown') AS name,
+               users.role,
+               strftime('%Y-%m', attendance.date) AS month,
+               COUNT(*) AS total_sessions,
+               COUNT(DISTINCT attendance.date) AS days_present,
+               ROUND(SUM(COALESCE(attendance.worked_hours, 0)), 2) AS total_hours,
+               ROUND(AVG(COALESCE(attendance.worked_hours, 0)), 2) AS avg_hours_per_session
         FROM attendance
         LEFT JOIN users
             ON CAST(attendance.emp_id AS INTEGER) = users.id
-        ORDER BY attendance.date DESC, attendance.checkin_time DESC
-    """).fetchall()
+    """
+    
+    # Fetch detailed session data (day by day)
+    detail_query = """
+        SELECT attendance.emp_id,
+               COALESCE(users.name, 'Unknown') AS name,
+               users.role,
+               attendance.date,
+               attendance.day,
+               attendance.checkin_time,
+               attendance.checkout_time,
+               ROUND(COALESCE(attendance.worked_hours, 0), 2) AS worked_hours
+        FROM attendance
+        LEFT JOIN users
+            ON CAST(attendance.emp_id AS INTEGER) = users.id
+    """
+
+    params = []
+    if user_id_filter:
+        monthly_query += " WHERE attendance.emp_id = ? "
+        detail_query += " WHERE attendance.emp_id = ? "
+        params.append(user_id_filter)
+
+    monthly_query += """
+        GROUP BY attendance.emp_id, name, users.role, month
+        ORDER BY month DESC, name ASC
+    """
+    
+    detail_query += """
+        ORDER BY attendance.emp_id, attendance.date ASC, attendance.checkin_time ASC
+    """
+
+    monthly_rows = db.execute(monthly_query, tuple(params)).fetchall()
+    detail_rows = db.execute(detail_query, tuple(params)).fetchall()
     db.close()
 
+    # Build PDF
     buffer = io.BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=letter)
-    text = pdf.beginText(40, 750)
-    text.setFont("Helvetica", 10)
-
-    text.textLine("Attendance Report")
-    text.textLine("-------------------------------")
-    for r in rows:
-        text.textLine(
-            f"User ID: {r[0]} | Name: {r[1]} | Date: {r[2]} | "
-            f"In: {r[3] or '-'} | Out: {r[4] or '-'} | "
-            f"Hours: {round(r[5], 2) if r[5] is not None else 'N/A'}"
-        )
-
-    pdf.drawText(text)
-    pdf.save()
-
+    doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
+    story = []
+    styles = getSampleStyleSheet()
+    
+    # Title
+    report_date = datetime.datetime.now().strftime("%B %d, %Y at %I:%M %p")
+    if user_id_filter:
+        title_text = f"<b>Attendance Report - User ID: {user_id_filter}</b>"
+    else:
+        title_text = "<b>Attendance Report - All Users</b>"
+    
+    title = Paragraph(title_text, styles['Title'])
+    story.append(title)
+    story.append(Paragraph(f"<i>Generated on: {report_date}</i>", styles['Normal']))
+    story.append(Spacer(1, 0.3*inch))
+    
+    if not monthly_rows:
+        story.append(Paragraph("<b>No attendance records found for the selected filter.</b>", styles['Normal']))
+    else:
+        # ============== MONTHLY SUMMARY SECTION ==============
+        story.append(Paragraph("<b><u>Monthly Summary</u></b>", styles['Heading2']))
+        story.append(Spacer(1, 0.1*inch))
+        
+        summary_data = [['User ID', 'Name', 'Role', 'Month', 'Days', 'Sessions', 'Total Hrs', 'Avg/Session']]
+        for row in monthly_rows:
+            summary_data.append([
+                str(row[0]),
+                row[1],
+                row[2] or '-',
+                row[3],
+                str(row[5]),
+                str(row[4]),
+                str(row[6]),
+                str(row[7])
+            ])
+        
+        summary_table = Table(summary_data, colWidths=[0.7*inch, 1.3*inch, 0.8*inch, 0.8*inch, 0.6*inch, 0.7*inch, 0.8*inch, 0.9*inch])
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#667eea')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+            ('TOPPADDING', (0, 0), (-1, 0), 10),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
+        ]))
+        story.append(summary_table)
+        story.append(Spacer(1, 0.4*inch))
+        
+        # ============== DETAILED DAY-BY-DAY SESSIONS ==============
+        story.append(Paragraph("<b><u>Detailed Day-by-Day Sessions</u></b>", styles['Heading2']))
+        story.append(Spacer(1, 0.1*inch))
+        
+        # Group by user
+        user_sessions = {}
+        for row in detail_rows:
+            emp_id = row[0]
+            if emp_id not in user_sessions:
+                user_sessions[emp_id] = {
+                    'name': row[1],
+                    'role': row[2] or '-',
+                    'sessions': []
+                }
+            user_sessions[emp_id]['sessions'].append({
+                'date': row[3],
+                'day': row[4],
+                'checkin': row[5] or '-',
+                'checkout': row[6] or '-',
+                'hours': row[7]
+            })
+        
+        # Build tables for each user
+        for emp_id in sorted(user_sessions.keys()):
+            user_info = user_sessions[emp_id]
+            
+            # User header
+            story.append(Paragraph(
+                f"<b>User ID: {emp_id} | Name: {user_info['name']} | Role: {user_info['role']}</b>",
+                styles['Heading3']
+            ))
+            story.append(Spacer(1, 0.05*inch))
+            
+            # Session table
+            session_data = [['Date', 'Day', 'Check-In', 'Check-Out', 'Hours Worked']]
+            for session in user_info['sessions']:
+                session_data.append([
+                    session['date'],
+                    session['day'],
+                    session['checkin'],
+                    session['checkout'],
+                    str(session['hours'])
+                ])
+            
+            session_table = Table(session_data, colWidths=[1.2*inch, 1*inch, 1.3*inch, 1.3*inch, 1.2*inch])
+            session_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#28a745')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('TOPPADDING', (0, 0), (-1, 0), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightblue]),
+            ]))
+            story.append(session_table)
+            story.append(Spacer(1, 0.2*inch))
+        
+        # Footer note
+        story.append(Spacer(1, 0.2*inch))
+        story.append(Paragraph(
+            "<i>Note: All sessions are listed in chronological order. Hours are rounded to 2 decimal places.</i>",
+            styles['Normal']
+        ))
+    
+    # Build PDF
+    doc.build(story)
     buffer.seek(0)
+    
     return send_file(
         buffer,
         as_attachment=True,
-        download_name="attendance_report.pdf"
+        download_name=(
+            f"attendance_detailed_report_user_{user_id_filter}.pdf"
+            if user_id_filter else "attendance_detailed_report_all_users.pdf"
+        )
     )
 
 @app.route("/enroll", methods=["GET", "POST"])
@@ -1523,8 +2146,7 @@ def capture_faces(user_id):
         
         # Reload the recognizer with the newly trained model
         try:
-            recognizer = cv2.face.LBPHFaceRecognizer_create()
-            recognizer.read("TrainingImageLabel/Trainner.yml")
+            reload_recognizer_from_disk()
             print("✓ Recognizer reloaded")
         except Exception as e:
             print(f"Warning: Could not reload recognizer: {e}")
@@ -1536,21 +2158,6 @@ def capture_faces(user_id):
     else:
         return jsonify({"status": "captured", "trained": False, "message": "Images captured but training failed. Please try again."})
 
-
-
-@app.route("/train")
-def train():
-    global recognizer
-    success = train_model()
-    if success:
-        # Reload the recognizer with the newly trained model
-        recognizer = cv2.face.LBPHFaceRecognizer_create()
-        recognizer.read("TrainingImageLabel/Trainner.yml")
-        print("✓ Recognizer reloaded with new model")
-    return render_template("train.html")
-
-
-
 @app.route("/set_threshold", methods=["POST"])
 def set_threshold():
     global THRESHOLD
@@ -1560,6 +2167,41 @@ def set_threshold():
     requested = int(request.form["threshold"])
     THRESHOLD = max(35, min(70, requested))
     return redirect("/admin")
+
+
+@app.route("/set_mask_config", methods=["POST"])
+def set_mask_config():
+    global MASK_AWARE_ENABLED
+    global MASK_THRESHOLD_BOOST
+    global MASK_REQUIRED_STABLE_MATCHES
+    global MASK_MIN_UPPER_CORR
+    global MASK_MIN_UPPER_GAP
+    global MASK_MAX_UPPER_LBP_DIST
+    global MASK_MIN_UPPER_LBP_MARGIN
+    global IRIS_VERIFY_ENABLED
+    global IRIS_MIN_SCORE
+    global IRIS_MIN_GAP
+    global IRIS_MIN_VOTES
+
+    if not admin_required():
+        return "Unauthorized", 403
+
+    try:
+        MASK_AWARE_ENABLED = request.form.get("mask_enabled") == "on"
+        MASK_THRESHOLD_BOOST = max(0, min(20, int(request.form.get("mask_threshold_boost", MASK_THRESHOLD_BOOST))))
+        MASK_REQUIRED_STABLE_MATCHES = max(2, min(8, int(request.form.get("mask_stable_matches", MASK_REQUIRED_STABLE_MATCHES))))
+        MASK_MIN_UPPER_CORR = max(0.20, min(0.95, float(request.form.get("mask_min_upper_corr", MASK_MIN_UPPER_CORR))))
+        MASK_MIN_UPPER_GAP = max(0.0, min(0.20, float(request.form.get("mask_min_upper_gap", MASK_MIN_UPPER_GAP))))
+        MASK_MAX_UPPER_LBP_DIST = max(0.20, min(3.50, float(request.form.get("mask_max_upper_lbp", MASK_MAX_UPPER_LBP_DIST))))
+        MASK_MIN_UPPER_LBP_MARGIN = max(0.0, min(0.50, float(request.form.get("mask_min_upper_lbp_margin", MASK_MIN_UPPER_LBP_MARGIN))))
+        IRIS_VERIFY_ENABLED = request.form.get("iris_enabled") == "on"
+        IRIS_MIN_SCORE = max(-0.20, min(1.00, float(request.form.get("iris_min_score", IRIS_MIN_SCORE))))
+        IRIS_MIN_GAP = max(0.0, min(0.30, float(request.form.get("iris_min_gap", IRIS_MIN_GAP))))
+        IRIS_MIN_VOTES = max(1, min(2, int(request.form.get("iris_min_votes", IRIS_MIN_VOTES))))
+    except ValueError:
+        return redirect("/admin?msg=mask_invalid")
+
+    return redirect("/admin?msg=mask_saved")
 
 @app.route("/stats")
 def stats():
@@ -1601,7 +2243,18 @@ def admin():
         "admin.html",
         total_users=total_users,
         total_attendance=total_attendance,
-        threshold=THRESHOLD
+        threshold=THRESHOLD,
+        mask_aware_enabled=MASK_AWARE_ENABLED,
+        mask_threshold_boost=MASK_THRESHOLD_BOOST,
+        mask_required_stable_matches=MASK_REQUIRED_STABLE_MATCHES,
+        mask_min_upper_corr=MASK_MIN_UPPER_CORR,
+        mask_min_upper_gap=MASK_MIN_UPPER_GAP,
+        mask_max_upper_lbp_dist=MASK_MAX_UPPER_LBP_DIST,
+        mask_min_upper_lbp_margin=MASK_MIN_UPPER_LBP_MARGIN,
+        iris_verify_enabled=IRIS_VERIFY_ENABLED,
+        iris_min_score=IRIS_MIN_SCORE,
+        iris_min_gap=IRIS_MIN_GAP,
+        iris_min_votes=IRIS_MIN_VOTES
     )
 
 @app.route("/admin/complaints")
@@ -1738,55 +2391,6 @@ def camera_off():
         camera = None
 
     return jsonify({"status": "OFF"})
-
-@app.route("/train_and_test")
-def train_and_test():
-    try:
-        # ✅ Ensure training images exist
-        if not os.path.exists("TrainingImage"):
-            return jsonify({"status": "fail", "error": "No training images found"})
-
-        images = [
-            f for f in os.listdir("TrainingImage")
-            if f.endswith(".jpg")
-        ]
-
-        if len(images) == 0:
-            return jsonify({"status": "fail", "error": "No face images available"})
-
-        # ✅ Train model
-        train_model()
-
-        # ✅ Verify model file saved (faster than reloading)
-        model_path = "TrainingImageLabel/Trainner.yml"
-
-        if os.path.exists(model_path):
-            return jsonify({"status": "success"})
-        else:
-            return jsonify({"status": "fail", "error": "Model not saved"})
-
-    except Exception as e:
-        return jsonify({
-            "status": "fail",
-            "error": str(e)
-        })
-
-@app.route("/train_test_progress")
-def train_test_progress():
-    try:
-        # STEP 1: Train
-        train_model()
-
-        # STEP 2: Simple test (load model)
-        # Just confirm file exists
-        if not os.path.exists("TrainingImageLabel/Trainner.yml"):
-            raise Exception("Model not saved")
-
-
-        return jsonify({"status": "success"})
-
-    except Exception as e:
-        return jsonify({"status": "fail", "error": str(e)})
 
 @app.route("/test_preview")
 def test_preview():
