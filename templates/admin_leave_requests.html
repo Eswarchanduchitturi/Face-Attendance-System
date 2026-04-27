@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block page_title %}Admin Leave Requests{% endblock %}
+{% block content %}
+
+<div class="leave-admin-shell">
+    <section class="frosted-card mb-3">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h3 class="mb-1">Leave Approval Center</h3>
+                <p class="text-muted mb-0">Approve or deny employee leave requests. Approved requests are reflected in attendance as Leave Approved.</p>
+            </div>
+            <a href="/admin" class="btn btn-outline-secondary">Back to Admin</a>
+        </div>
+    </section>
+
+    {% if msg == 'approved' %}
+        <div class="alert alert-success">Leave approved successfully. Attendance updated for {{ applied or 0 }} day(s). Skipped {{ skipped or 0 }} day(s) with existing check-in/out.</div>
+    {% elif msg == 'denied' %}
+        <div class="alert alert-warning">Leave request denied.</div>
+    {% elif msg == 'already_processed' %}
+        <div class="alert alert-info">This leave request has already been processed.</div>
+    {% elif msg == 'not_found' %}
+        <div class="alert alert-danger">Leave request not found.</div>
+    {% elif msg == 'invalid_action' %}
+        <div class="alert alert-danger">Invalid action.</div>
+    {% elif msg == 'error' %}
+        <div class="alert alert-danger">Could not process leave request due to an internal error.</div>
+    {% endif %}
+
+    <section class="frosted-card">
+        <div class="table-responsive">
+            <table class="table modern-table align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Req ID</th>
+                        <th>Employee</th>
+                        <th>Role</th>
+                        <th>Subject</th>
+                        <th>Type</th>
+                        <th>From</th>
+                        <th>To</th>
+                        <th>Days</th>
+                        <th>Reason</th>
+                        <th>Status</th>
+                        <th>Applied At</th>
+                        <th>Reviewed At</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in requests %}
+                        <tr>
+                            <td>#{{ row[0] }}</td>
+                            <td>{{ row[1] }} - {{ row[2] }}</td>
+                            <td>{{ row[3] }}</td>
+                            <td>{{ row[4] }}</td>
+                            <td>{{ row[5] }}</td>
+                            <td>{{ row[6] }}</td>
+                            <td>{{ row[7] }}</td>
+                            <td>{{ row[8] }}</td>
+                            <td>
+                                {% set reason_text = row[9] or '-' %}
+                                {% if reason_text|length > 96 %}
+                                    <div class="reason-preview">
+                                        <span>{{ reason_text[:96] }}...</span>
+                                        <button type="button"
+                                                class="btn btn-link btn-sm p-0 ms-2"
+                                                data-reason="{{ reason_text|e }}"
+                                                data-employee="{{ row[2]|e }}"
+                                                data-subject="{{ row[4]|e }}"
+                                                onclick="openLeaveReasonModalFromButton(this)">Read</button>
+                                    </div>
+                                {% else %}
+                                    <span>{{ reason_text }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if row[10] == 'Approved' %}
+                                    <span class="badge text-bg-success">Approved</span>
+                                {% elif row[10] == 'Denied' %}
+                                    <span class="badge text-bg-danger">Denied</span>
+                                {% else %}
+                                    <span class="badge text-bg-warning">Pending</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ row[12] or '-' }}</td>
+                            <td>{{ row[13] or '-' }}</td>
+                            <td>
+                                {% if row[10] == 'Pending' %}
+                                    <form method="post" action="/admin/leave_requests/{{ row[0] }}/action" class="d-grid gap-1">
+                                        <textarea name="admin_comment" class="form-control form-control-sm" rows="2" maxlength="500" placeholder="Comment (optional)"></textarea>
+                                        <div class="d-flex gap-1">
+                                            <button class="btn btn-success btn-sm" type="submit" name="action" value="approve">Approve</button>
+                                            <button class="btn btn-danger btn-sm" type="submit" name="action" value="deny">Deny</button>
+                                        </div>
+                                    </form>
+                                {% else %}
+                                    <span class="text-muted small">{{ row[11] or '-' }}</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr>
+                            <td colspan="13" class="text-center text-muted">No leave requests available.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+
+<div id="leaveReasonModal" class="leave-modal d-none" role="dialog" aria-modal="true" aria-labelledby="leaveReasonTitle">
+    <div class="leave-modal-backdrop" onclick="closeLeaveReasonModal()"></div>
+    <div class="leave-modal-card">
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+            <div>
+                <h4 id="leaveReasonTitle" class="mb-1">Leave Reason</h4>
+                <p id="leaveReasonMeta" class="text-muted mb-0 small"></p>
+            </div>
+            <button type="button" class="btn-close" aria-label="Close" onclick="closeLeaveReasonModal()"></button>
+        </div>
+        <div id="leaveReasonBody" class="leave-reason-body"></div>
+    </div>
+</div>
+
+<style>
+.leave-admin-shell { display: grid; gap: 12px; }
+
+.reason-preview {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 320px;
+}
+
+.reason-preview span {
+    display: inline-block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 220px;
+    color: #33414d;
+}
+
+.leave-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1050;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.leave-modal.d-none { display: none !important; }
+
+.leave-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(10, 18, 28, 0.62);
+    backdrop-filter: blur(7px);
+}
+
+.leave-modal-card {
+    position: relative;
+    z-index: 1;
+    width: min(720px, 96vw);
+    background: #fff;
+    border-radius: 18px;
+    padding: 22px;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+}
+
+.leave-reason-body {
+    white-space: pre-wrap;
+    line-height: 1.65;
+    color: #24323d;
+    max-height: 55vh;
+    overflow: auto;
+    padding-right: 8px;
+}
+</style>
+
+<script>
+function openLeaveReasonModal(reason, employeeName, subject) {
+    const modal = document.getElementById('leaveReasonModal');
+    document.getElementById('leaveReasonTitle').textContent = subject || 'Leave Reason';
+    document.getElementById('leaveReasonMeta').textContent = employeeName ? `Employee: ${employeeName}` : '';
+    document.getElementById('leaveReasonBody').textContent = reason || '-';
+    modal.classList.remove('d-none');
+}
+
+function openLeaveReasonModalFromButton(button) {
+    openLeaveReasonModal(
+        button.getAttribute('data-reason') || '-',
+        button.getAttribute('data-employee') || '',
+        button.getAttribute('data-subject') || 'Leave Reason'
+    );
+}
+
+function closeLeaveReasonModal() {
+    const modal = document.getElementById('leaveReasonModal');
+    if (modal) modal.classList.add('d-none');
+}
+
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        closeLeaveReasonModal();
+    }
+});
+</script>
+
+{% endblock %}

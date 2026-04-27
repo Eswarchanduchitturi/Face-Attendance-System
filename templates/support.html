@@ -1,129 +1,543 @@
 {% extends "base.html" %}
-{% block page_title %}Support Center{% endblock %}
+{% block page_title %}Help Desk{% endblock %}
 {% block content %}
 
 <div class="support-shell">
-    <section class="support-head">
-        <h1>Support Center</h1>
-        <p>Help, feedback, grievances and system architecture overview.</p>
+    <section class="support-hero">
+        <div class="support-hero-main">
+            <div class="support-hero-icon">
+                <i class="fa-solid fa-headset"></i>
+            </div>
+            <div>
+                <p class="hero-label">Help Desk</p>
+                <h1>Support and Leave Center</h1>
+                <p class="hero-copy">Submit feedback, raise a grievance, or request leave from one simple page. Leave requests are reviewed by admin and approved days are reflected in attendance automatically.</p>
+            </div>
+        </div>
+        <div class="hero-actions">
+            <a href="#support-section" class="hero-pill">Support</a>
+            <a href="#leave-section" class="hero-pill">Leave Request</a>
+        </div>
     </section>
 
-    <section class="support-card matrix-card">
-        <h3>About Face Attendance System</h3>
-        <h5>How the Application Works</h5>
-        <ul>
-            <li>The system captures live video through the camera during check-in or check-out sessions.</li>
-            <li>Each frame is processed using Haar Cascade to detect face regions.</li>
-            <li>Detected faces are converted into grayscale and preprocessed for better recognition.</li>
-            <li>Facial features are extracted using LBPH (Local Binary Pattern Histogram).</li>
-            <li>Extracted features are compared with trained employee facial data from the model.</li>
-            <li>If identity is verified, attendance is marked as Check-In or Check-Out.</li>
-            <li>The system calculates worked hours from login and logout timestamps.</li>
-            <li>Records are stored securely with date, day, time and images.</li>
-        </ul>
+    {% if msg == 'saved' %}
+        <div class="alert alert-success">Your support request was submitted successfully.</div>
+    {% endif %}
+    {% if leave_msg == 'submitted' %}
+        <div class="alert alert-success">Leave request submitted successfully. Admin will review it.</div>
+    {% endif %}
+    {% if leave_error %}
+        <div class="alert alert-danger">{{ leave_error }}</div>
+    {% endif %}
 
-        <hr class="my-4">
+    <section class="overview-grid">
+        <article class="overview-card">
+            <h3>How the system works</h3>
+            <ul>
+                <li>Live camera sessions handle check-in and check-out.</li>
+                <li>Face detection uses Haar Cascade and LBPH recognition.</li>
+                <li>Attendance stores time, date, image, and worked hours.</li>
+                <li>Admin can review feedback, complaints, and leave requests.</li>
+            </ul>
+        </article>
 
-        <h5>Core Technologies Used</h5>
-        <ul>
-            <li>Python + Flask</li>
-            <li>OpenCV + Haar Cascade</li>
-            <li>LBPH Face Recognizer</li>
-            <li>SQLite Database</li>
-            <li>Bootstrap + Custom UI</li>
-        </ul>
-
-        <hr class="my-4">
-
-        <h5>System Features</h5>
-        <ul>
-            <li>Smart Check-In / Check-Out mode</li>
-            <li>Auto worked-hours calculation</li>
-            <li>Live face verification</li>
-            <li>Recognition monitoring and analytics</li>
-            <li>Attendance history and PDF export</li>
-            <li>Enrollment and model training</li>
-            <li>Complaint and feedback management</li>
-        </ul>
+        <article class="overview-card">
+            <h3>Core features</h3>
+            <ul>
+                <li>Recognition monitoring and analytics.</li>
+                <li>Attendance history and PDF export.</li>
+                <li>User enrollment and model training.</li>
+                <li>Formal leave request workflow with approval tracking.</li>
+            </ul>
+        </article>
     </section>
 
-    <section class="support-card matrix-card">
-        <h4>Submit Feedback or Grievance</h4>
-        <form method="POST" action="/support">
-            <div class="mb-3">
-                <label class="form-label">Category</label>
-                <select name="category" class="form-control">
-                    <option value="Feedback">Feedback</option>
-                    <option value="Technical Issue">Technical Issue</option>
-                    <option value="Complaint">Complaint</option>
-                </select>
+    <section id="support-section" class="forms-grid">
+        <article class="support-card">
+            <div class="card-topline">
+                <div>
+                    <p class="section-tag">Support</p>
+                    <h3>Feedback or Grievance</h3>
+                </div>
+                <span class="badge text-bg-light">Fast response</span>
             </div>
 
-            <div class="mb-3">
-                <label class="form-label">Message</label>
-                <textarea name="message" rows="4" class="form-control" required></textarea>
+            <form method="POST" action="/support" class="stack-form">
+                <input type="hidden" name="type" value="grievance">
+                <div>
+                    <label class="form-label">Category</label>
+                    <select name="category" class="form-select">
+                        <option value="Feedback">Feedback</option>
+                        <option value="Technical Issue">Technical Issue</option>
+                        <option value="Complaint">Complaint</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label">Message</label>
+                    <textarea name="message" rows="5" class="form-control" required placeholder="Describe the issue or share your feedback..."></textarea>
+                </div>
+                <button class="btn btn-primary" type="submit">Submit Message</button>
+            </form>
+        </article>
+
+        <article id="leave-section" class="support-card leave-card">
+            <div class="card-topline">
+                <div>
+                    <p class="section-tag">Leave</p>
+                    <h3>Formal Leave Request</h3>
+                </div>
+                <span class="badge text-bg-dark">Admin approval required</span>
             </div>
 
-            <button class="btn btn-primary">Submit</button>
-        </form>
+            <form method="POST" action="/support" class="stack-form">
+                <input type="hidden" name="type" value="leave_request">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Employee</label>
+                        <select name="emp_id" class="form-select" required>
+                            <option value="">Select Employee</option>
+                            {% for user in users %}
+                                <option value="{{ user[0] }}">{{ user[0] }} - {{ user[1] }} ({{ user[2] }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Leave Type</label>
+                        <select name="leave_type" class="form-select" required>
+                            <option value="General">General</option>
+                            <option value="Sick Leave">Sick Leave</option>
+                            <option value="Casual Leave">Casual Leave</option>
+                            <option value="Emergency">Emergency</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Subject</label>
+                        <input type="text" name="subject" class="form-control" maxlength="120" placeholder="Leave request subject" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Start Date</label>
+                        <input type="date" name="start_date" class="form-control" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">End Date</label>
+                        <input type="date" name="end_date" class="form-control" required>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Reason</label>
+                        <textarea name="reason" rows="5" class="form-control" maxlength="1200" required placeholder="Respected Sir/Madam, I kindly request leave from ..."></textarea>
+                    </div>
+                </div>
+                <button class="btn btn-primary" type="submit">Submit Leave Request</button>
+            </form>
+        </article>
+    </section>
+
+    <section class="support-card recent-card">
+        <div class="card-topline">
+            <div>
+                <p class="section-tag">Leave Status</p>
+                <h3>Recent Leave Requests</h3>
+            </div>
+            <span class="text-muted small">Latest 50</span>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table modern-table align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Employee</th>
+                        <th>Subject</th>
+                        <th>Type</th>
+                        <th>From</th>
+                        <th>To</th>
+                        <th>Days</th>
+                        <th>Status</th>
+                        <th>Reviewed</th>
+                        <th>Admin Comment</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in leave_requests %}
+                        <tr>
+                            <td>#{{ row[0] }}</td>
+                            <td>
+                                <div class="d-flex flex-column">
+                                    <span>{{ row[1] }} - {{ row[2] }}</span>
+                                    <small class="text-muted">Applied: {{ row[9] or '-' }}</small>
+                                </div>
+                            </td>
+                            <td>
+                                {% set subject_text = row[3] or '-' %}
+                                {% if subject_text|length > 48 %}
+                                    <span title="{{ subject_text }}">{{ subject_text[:48] }}...</span>
+                                {% else %}
+                                    <span>{{ subject_text }}</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ row[4] }}</td>
+                            <td>{{ row[5] }}</td>
+                            <td>{{ row[6] }}</td>
+                            <td>{{ row[7] }}</td>
+                            <td>
+                                {% if row[8] == 'Approved' %}
+                                    <span class="badge text-bg-success">Approved</span>
+                                {% elif row[8] == 'Denied' %}
+                                    <span class="badge text-bg-danger">Denied</span>
+                                {% else %}
+                                    <span class="badge text-bg-warning">Pending</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ row[10] or '-' }}</td>
+                            <td>
+                                {% set admin_comment = row[11] or '' %}
+                                {% if admin_comment %}
+                                    {% if admin_comment|length > 36 %}
+                                        <div class="comment-preview">
+                                            <span>{{ admin_comment[:36] }}...</span>
+                                            <button type="button"
+                                                    class="comment-read-link"
+                                                    data-comment="{{ admin_comment|e }}"
+                                                    data-user="{{ row[2]|e }}"
+                                                    onclick="openAdminCommentModalFromButton(this)">Read</button>
+                                        </div>
+                                    {% else %}
+                                        <span>{{ admin_comment }}</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr>
+                            <td colspan="10" class="text-center text-muted">No leave requests yet.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </section>
 </div>
 
-<style>
-@import url('https://fonts.googleapis.com/css2?family=DotGothic16&display=swap');
+<div id="adminCommentModal" class="comment-modal d-none" role="dialog" aria-modal="true" aria-labelledby="adminCommentTitle">
+    <div class="comment-modal-backdrop" onclick="closeAdminCommentModal()"></div>
+    <div class="comment-modal-card">
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
+            <div>
+                <h4 id="adminCommentTitle" class="mb-1">Admin Comment</h4>
+                <p id="adminCommentMeta" class="text-muted mb-0 small"></p>
+            </div>
+            <button type="button" class="btn-close" aria-label="Close" onclick="closeAdminCommentModal()"></button>
+        </div>
+        <div id="adminCommentBody" class="comment-modal-body"></div>
+    </div>
+</div>
 
+<style>
 .support-shell {
     display: grid;
     gap: 16px;
 }
 
-.support-head h1 {
+.support-hero {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    align-items: center;
+    background: linear-gradient(130deg, #101419 0%, #0d6efd 58%, #cf2e2e 100%) !important;
+    color: #ffffff !important;
+    border: none;
+    border-radius: 20px;
+    padding: 18px 20px;
+    box-shadow: 0 16px 34px rgba(11, 28, 58, 0.20);
+}
+
+.support-hero-main {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.support-hero-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    background: rgba(255, 255, 255, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.34);
+}
+
+.hero-label,
+.section-tag {
+    margin: 0 0 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    font-size: 12px;
+    color: #b7d0ea;
+}
+
+.support-hero h1 {
     margin: 0;
     font-family: "Sora", sans-serif;
-    font-size: 30px;
+    font-size: 24px;
+    font-weight: 700;
 }
 
-.support-head p {
-    margin: 6px 0 0;
-    color: #5b6b79;
+.hero-copy {
+    margin: 4px 0 0;
+    max-width: 760px;
+    color: #ffffff;
+    opacity: 0.92;
+    font-size: 13px;
+    line-height: 1.5;
 }
 
-.matrix-card {
-    font-family: "DotGothic16", monospace;
-    border: 1px solid #cfd8e3;
-    background:
-        radial-gradient(circle at 1px 1px, rgba(33, 37, 41, 0.08) 1px, transparent 0) 0 0 / 14px 14px,
-        linear-gradient(180deg, #f9fbfe 0%, #f3f7fb 100%);
+.hero-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
 }
 
-.matrix-card h3,
-.matrix-card h4,
-.matrix-card h5 {
-    font-family: "DotGothic16", monospace;
-    letter-spacing: 0.4px;
-    color: #101820;
+.hero-pill {
+    border: 1px solid rgba(255, 255, 255, 0.42);
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    padding: 7px 12px;
+    transition: all 0.2s ease;
 }
 
-.matrix-card ul {
-    margin-top: 10px;
-    padding-left: 22px;
-    line-height: 1.55;
-    color: #1d2d3a;
+.hero-pill:hover {
+    border-color: rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+    text-decoration: none;
+    transform: translateY(-1px);
 }
 
-.matrix-card .form-label {
-    font-size: 14px;
-    color: #152533;
+.overview-grid,
+.forms-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
 }
 
-.matrix-card .form-control {
+.overview-card,
+.support-card {
+    background: linear-gradient(180deg, #ffffff 0%, #fbfcfd 100%);
+    border: 1px solid #d9e0e6;
+    border-radius: 18px;
+    padding: 20px;
+    box-shadow: 0 12px 30px rgba(15, 23, 32, 0.06);
+}
+
+.overview-card h3,
+.support-card h3 {
+    margin: 0;
+    font-family: "Sora", sans-serif;
+    font-size: 20px;
+    color: #111;
+}
+
+.overview-card ul {
+    margin: 12px 0 0;
+    padding-left: 20px;
+    line-height: 1.7;
+    color: #3f5568;
+}
+
+.overview-card li {
+    margin-bottom: 4px;
+}
+
+.card-topline {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.stack-form {
+    display: grid;
+    gap: 14px;
+}
+
+.support-card .section-tag {
+    color: #5f7484;
+}
+
+.support-card .form-control,
+.support-card .form-select {
+    border-radius: 12px;
+    border: 1px solid #cfd9e0;
+    padding: 11px 12px;
     background: #ffffff;
-    border: 1px solid #bac8d7;
 }
 
-.matrix-card .btn-primary {
-    min-width: 130px;
+.support-card .form-control:focus,
+.support-card .form-select:focus {
+    border-color: #41a59c;
+    box-shadow: 0 0 0 0.2rem rgba(15, 118, 110, 0.15);
+}
+
+.support-card .btn-primary {
+    background: linear-gradient(135deg, #111111 0%, #27496d 100%);
+    border-color: #111111;
+}
+
+.support-card .btn-primary:hover {
+    background: linear-gradient(135deg, #000000 0%, #1f3546 100%);
+    border-color: #000000;
+}
+
+.support-card .btn-primary {
+    min-width: 160px;
+    justify-self: start;
+}
+
+.recent-card .table-responsive {
+    overflow-x: auto;
+}
+
+@media (max-width: 900px) {
+    .support-hero {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .support-hero h1 {
+        font-size: 20px;
+    }
+}
+
+.badge.text-bg-light {
+    background: #eef4f9 !important;
+    color: #355165 !important;
+    border: 1px solid #d9e0e6;
+}
+
+.support-card .table {
+    color: #24323d;
+}
+
+.support-card .table thead th {
+    background: #f3f7f9;
+    color: #33414d;
+    font-weight: 700;
+}
+
+.support-card .table td,
+.support-card .table th {
+    border-color: #edf2f5;
+}
+
+.comment-preview {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 260px;
+}
+
+.comment-preview span {
+    display: inline-block;
+    max-width: 170px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #324758;
+}
+
+.comment-read-link {
+    border: none;
+    background: transparent;
+    color: #0d6efd;
+    font-size: 12px;
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    padding: 0;
+    transition: color .18s ease;
+}
+
+.comment-read-link:hover {
+    color: #0a58ca;
+}
+
+.comment-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.comment-modal.d-none {
+    display: none !important;
+}
+
+.comment-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(10, 16, 26, 0.62);
+    backdrop-filter: blur(6px);
+}
+
+.comment-modal-card {
+    position: relative;
+    z-index: 1;
+    width: min(680px, 95vw);
+    background: #ffffff;
+    border-radius: 18px;
+    padding: 20px;
+    box-shadow: 0 24px 54px rgba(13, 21, 33, 0.28);
+    border: 1px solid #d9e3ee;
+}
+
+.comment-modal-body {
+    white-space: pre-wrap;
+    line-height: 1.65;
+    color: #24323d;
+    max-height: 52vh;
+    overflow: auto;
+    padding-right: 8px;
 }
 </style>
+
+<script>
+function openAdminCommentModal(commentText, userName) {
+    const modal = document.getElementById('adminCommentModal');
+    document.getElementById('adminCommentMeta').textContent = userName ? `Employee: ${userName}` : '';
+    document.getElementById('adminCommentBody').textContent = commentText || '-';
+    modal.classList.remove('d-none');
+}
+
+function openAdminCommentModalFromButton(button) {
+    openAdminCommentModal(
+        button.getAttribute('data-comment') || '-',
+        button.getAttribute('data-user') || ''
+    );
+}
+
+function closeAdminCommentModal() {
+    const modal = document.getElementById('adminCommentModal');
+    if (modal) modal.classList.add('d-none');
+}
+
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        closeAdminCommentModal();
+    }
+});
+</script>
 
 {% endblock %}

@@ -28,12 +28,7 @@
                                placeholder="Full Name" required>
                     </div>
 
-                    <div class="form-group">
-                        <select name="role" class="form-control modern-input">
-                            <option value="student">Student</option>
-                            <option value="faculty">Faculty</option>
-                        </select>
-                    </div>
+                    <input type="hidden" name="role" value="employee">
                     
                     <button type="submit" id="submitBtn" class="btn btn-modern w-100">
                         <span>Start Enrollment</span>
@@ -729,7 +724,7 @@ const steps = [
     },
     {
         title: "Face Detection",
-        desc: "Scanning for your face (20 captures)",
+        desc: "Scanning for your face (12 captures)",
         icon: "👤",
         progress: 30,
         image: "{{ url_for('static', filename='images/enroll_steps/capture.gif') }}"
@@ -772,6 +767,31 @@ function showAlertCard(title, message, icon = "⚠️") {
     document.getElementById("alertTitle").textContent = title;
     document.getElementById("alertMessage").textContent = message;
     document.getElementById("alertCard").classList.remove("d-none");
+}
+
+function formatDuplicateDebug(debugData) {
+    if (!debugData || !Array.isArray(debugData.top_candidates) || debugData.top_candidates.length === 0) {
+        return "";
+    }
+
+    const lines = [];
+    lines.push("");
+    lines.push("Debug info:");
+    const strongConf = debugData.strong_duplicate_conf !== undefined
+        ? `, Strong Match: ${debugData.strong_duplicate_conf}`
+        : "";
+    lines.push(`Threshold: ${debugData.duplicate_conf_threshold}${strongConf}, Required Hits: ${debugData.required_hits}`);
+    if (debugData.best_avg_conf !== undefined && debugData.second_best_avg_conf !== undefined) {
+        lines.push(`Best Avg: ${debugData.best_avg_conf}, Second Avg: ${debugData.second_best_avg_conf}, Margin: ${debugData.confidence_margin}`);
+    }
+
+    for (const row of debugData.top_candidates) {
+        lines.push(
+            `- ID ${row.user_id} (${row.name}) | hits=${row.hits} | best=${row.best_conf} | avg=${row.avg_conf}`
+        );
+    }
+
+    return lines.join("\n");
 }
 
 function closeAlertCard() {
@@ -871,7 +891,11 @@ document.getElementById("userId").addEventListener("blur", async function() {
         const response = await fetch(`/check_user/${userId}`);
         const data = await response.json();
         
-        if (data.exists) {
+        if (data.exists && data.allow_reenroll) {
+            checkMsg.innerHTML = `<span style="color: #0d6efd;">♻️ User ID ${userId} exists as "${data.user_name}". Re-enrollment will refresh face samples.</span>`;
+            checkMsg.classList.remove("d-none");
+            submitBtn.disabled = false;
+        } else if (data.exists) {
             checkMsg.innerHTML = `<span style="color: red;">❌ User ID ${userId} already enrolled as "${data.user_name}"</span>`;
             checkMsg.classList.remove("d-none");
             submitBtn.disabled = true;
@@ -899,7 +923,7 @@ document.getElementById("enrollForm").onsubmit = async function(e){
     try {
         const checkResponse = await fetch(`/check_user/${userId}`);
         const checkData = await checkResponse.json();
-        if (checkData.exists) {
+        if (checkData.exists && !checkData.allow_reenroll) {
             showAlertCard("User Already Enrolled", `User ID ${userId} is already enrolled!`, "X");
             return;
         }
@@ -931,7 +955,11 @@ document.getElementById("enrollForm").onsubmit = async function(e){
 
         if (!enrollResponse.ok) {
             const errorData = await enrollResponse.json();
-            showAlertCard("Enrollment Error", errorData.message, "X");
+            if (errorData.status === "duplicate_face") {
+                showAlertCard("Duplicate User Found", errorData.message, "!");
+            } else {
+                showAlertCard("Enrollment Error", errorData.message, "X");
+            }
             return;
         }
 
@@ -942,7 +970,8 @@ document.getElementById("enrollForm").onsubmit = async function(e){
         const result = await captureResponse.json();
 
         if (result.status === "duplicate_face") {
-            showAlertCard("Duplicate Face Detected", result.message, "!");
+            const debugText = formatDuplicateDebug(result.debug);
+            showAlertCard("Duplicate Face Detected", `${result.message}${debugText}`, "!");
             return;
         }
 

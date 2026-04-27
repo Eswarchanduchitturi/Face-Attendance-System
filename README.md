@@ -26,6 +26,8 @@ The system supports face enrollment, live recognition, attendance tracking, admi
 ### 🛠️ Admin Features
 - Secure Admin Login
 - View Attendance Analytics
+- Automatic Payroll Management
+- Monthly Salary Calculation from Attendance
 - Download Full Attendance Report (PDF)
 - Manage Complaints (Open / Close)
 - View User Feedback
@@ -204,6 +206,8 @@ Admin can view analytics & reports
 📄 Reports & Exports
 
 Attendance history downloadable as PDF
+
+Payroll summaries downloadable as PDF
 
 Admin can download full attendance report
 

@@ -24,10 +24,18 @@
             <strong>{{ total_attendance }}</strong>
         </article>
         <article class="metric-card">
+            <span>Pending Leave Requests</span>
+            <strong>{{ pending_leave_requests }}</strong>
+        </article>
+        <article class="metric-card">
             <span>Recognition Threshold</span>
             <strong>{{ threshold }}</strong>
         </article>
     </section>
+
+    {% if request.args.get('msg') == 'settings_saved' %}
+        <div class="alert alert-success">Payroll settings saved successfully.</div>
+    {% endif %}
 
     <section class="quick-links">
         <a href="/admin/users" class="quick-card">
@@ -35,6 +43,13 @@
             <div>
                 <h4>Manage Users</h4>
                 <p>Add, edit and remove user accounts.</p>
+            </div>
+        </a>
+        <a href="/payroll" class="quick-card">
+            <i class="fa-solid fa-wallet"></i>
+            <div>
+                <h4>Payroll</h4>
+                <p>Auto-calculate salaries from attendance data.</p>
             </div>
         </a>
         <a href="/admin/complaints" class="quick-card">
@@ -51,6 +66,148 @@
                 <p>Track sentiment and user comments.</p>
             </div>
         </a>
+    </section>
+
+    <section class="frosted-card mb-3 leave-card">
+        <div class="section-head">
+            <div>
+                <div class="card-title mb-1">Leave Approval Center</div>
+                <p class="section-note mb-0">Review employee leave applications here. Approved leave is written into attendance as <strong>Leave Approved</strong>.</p>
+            </div>
+            <a href="/admin/leave_requests" class="btn btn-outline-secondary btn-sm">Open Full Queue</a>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table modern-table align-middle mb-0 leave-table">
+                <thead>
+                    <tr>
+                        <th>Req ID</th>
+                        <th>Employee</th>
+                        <th>Type</th>
+                        <th>From</th>
+                        <th>To</th>
+                        <th>Days</th>
+                        <th>Reason</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for row in recent_leave_requests %}
+                    <tr>
+                        <td><strong>#{{ row[0] }}</strong></td>
+                        <td>
+                            <div class="d-flex flex-column">
+                                <span>{{ row[2] }}</span>
+                                <small class="text-muted">ID {{ row[1] }} · {{ row[3] }}</small>
+                            </div>
+                        </td>
+                        <td>{{ row[5] }}</td>
+                        <td>{{ row[6] }}</td>
+                        <td>{{ row[7] }}</td>
+                        <td>{{ row[8] }}</td>
+                        <td>
+                            {% set reason_text = row[9] or '-' %}
+                            {% if reason_text|length > 96 %}
+                                <div class="reason-preview">
+                                    <span>{{ reason_text[:96] }}...</span>
+                                    <button type="button" class="btn btn-link btn-sm p-0 ms-2" onclick="openLeaveReasonModal({{ reason_text|tojson }}, {{ row[2]|tojson }}, {{ row[4]|tojson }})">Read</button>
+                                </div>
+                            {% else %}
+                                <span>{{ reason_text }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if row[10] == 'Approved' %}
+                                <span class="badge text-bg-success">Approved</span>
+                            {% elif row[10] == 'Denied' %}
+                                <span class="badge text-bg-danger">Denied</span>
+                            {% else %}
+                                <span class="badge text-bg-warning">Pending</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if row[10] == 'Pending' %}
+                                <form method="post" action="/admin/leave_requests/{{ row[0] }}/action" class="d-grid gap-1">
+                                    <textarea name="admin_comment" class="form-control form-control-sm" rows="2" maxlength="500" placeholder="Comment (optional)"></textarea>
+                                    <div class="d-flex gap-1">
+                                        <button class="btn btn-success btn-sm" type="submit" name="action" value="approve">Approve</button>
+                                        <button class="btn btn-danger btn-sm" type="submit" name="action" value="deny">Deny</button>
+                                    </div>
+                                </form>
+                            {% else %}
+                                <span class="text-muted small">{{ row[11] or '-' }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="9" class="text-center text-muted">No leave requests yet.</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="frosted-card payroll-card mb-3">
+        <div class="section-head">
+            <div>
+                <div class="card-title mb-1">Payroll Settings</div>
+                <p class="section-note mb-0">Edit salary defaults here. Payroll calculations on the payroll page will use these settings automatically.</p>
+            </div>
+            <span class="badge text-bg-dark">Defaults auto-filled from attendance</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table modern-table align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Monthly Salary</th>
+                        <th>Hourly Rate</th>
+                        <th>Workdays</th>
+                        <th>Std Hrs</th>
+                        <th>OT x</th>
+                        <th>Absent Deduction</th>
+                        <th>Bonus</th>
+                        <th width="130">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for row in payroll_settings_rows %}
+                    {% set form_id = 'payroll-admin-form-' ~ row.user_id %}
+                    <tr>
+                        <td><strong>#{{ row.user_id }}</strong></td>
+                        <td>
+                            <div class="d-flex flex-column">
+                                <span>{{ row.name }}</span>
+                                {% if row.settings.is_default %}
+                                    <small class="text-muted">Suggested default</small>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td><input type="number" step="0.01" min="0" class="form-control" name="monthly_salary" value="{{ row.settings.monthly_salary }}" form="{{ form_id }}"></td>
+                        <td><input type="number" step="0.01" min="0" class="form-control" name="hourly_rate" value="{{ row.settings.hourly_rate }}" form="{{ form_id }}"></td>
+                        <td><input type="number" step="1" min="0" class="form-control" name="workdays_per_month" value="{{ row.settings.workdays_per_month }}" form="{{ form_id }}"></td>
+                        <td><input type="number" step="0.5" min="1" class="form-control" name="standard_hours" value="{{ row.settings.standard_hours }}" form="{{ form_id }}"></td>
+                        <td><input type="number" step="0.1" min="1" class="form-control" name="overtime_multiplier" value="{{ row.settings.overtime_multiplier }}" form="{{ form_id }}"></td>
+                        <td><input type="number" step="0.01" min="0" class="form-control" name="deduction_per_absent_day" value="{{ row.settings.deduction_per_absent_day }}" form="{{ form_id }}"></td>
+                        <td><input type="number" step="0.01" min="0" class="form-control" name="bonus_amount" value="{{ row.settings.bonus_amount }}" form="{{ form_id }}"></td>
+                        <td>
+                            <form id="{{ form_id }}" method="POST" action="/payroll/update_settings/{{ row.user_id }}">
+                                <input type="hidden" name="month" value="{{ current_month if current_month is defined else '' }}">
+                                <input type="hidden" name="redirect_to" value="/admin">
+                                <button type="submit" class="btn btn-success btn-sm w-100">
+                                    <i class="fa-solid fa-floppy-disk me-1"></i> Save
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </section>
 
     <section class="frosted-card mb-3">
@@ -175,6 +332,20 @@
     </section>
 </div>
 
+<div id="leaveReasonModal" class="leave-modal d-none" role="dialog" aria-modal="true" aria-labelledby="leaveReasonTitle">
+    <div class="leave-modal-backdrop" onclick="closeLeaveReasonModal()"></div>
+    <div class="leave-modal-card">
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+            <div>
+                <h4 id="leaveReasonTitle" class="mb-1">Leave Reason</h4>
+                <p id="leaveReasonMeta" class="text-muted mb-0 small"></p>
+            </div>
+            <button type="button" class="btn-close" aria-label="Close" onclick="closeLeaveReasonModal()"></button>
+        </div>
+        <div id="leaveReasonBody" class="leave-reason-body"></div>
+    </div>
+</div>
+
 <style>
 .admin-shell { display: grid; gap: 14px; }
 .admin-hero {
@@ -202,7 +373,7 @@
 
 .metrics-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 12px;
 }
 .metric-card {
@@ -226,7 +397,7 @@
     display: block;
 }
 
-.quick-links { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.quick-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
 .quick-card {
     text-decoration: none;
     color: inherit;
@@ -251,6 +422,68 @@
     transform: translateY(-2px);
     box-shadow: 0 12px 26px rgba(15,23,32,.08);
 }
+
+.leave-table td {
+    vertical-align: top;
+}
+
+.reason-preview {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 320px;
+}
+
+.reason-preview span {
+    display: inline-block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 220px;
+    color: #33414d;
+}
+
+.leave-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1050;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.leave-modal.d-none { display: none !important; }
+
+.leave-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(10, 18, 28, 0.62);
+    backdrop-filter: blur(7px);
+}
+
+.leave-modal-card {
+    position: relative;
+    z-index: 1;
+    width: min(720px, 96vw);
+    background: #fff;
+    border-radius: 18px;
+    padding: 22px;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+}
+
+.leave-reason-body {
+    white-space: pre-wrap;
+    line-height: 1.65;
+    color: #24323d;
+    max-height: 55vh;
+    overflow: auto;
+    padding-right: 8px;
+}
+
+.payroll-card .section-head { margin-bottom: 12px; }
+.payroll-card .table-responsive { overflow-x: auto; }
+.payroll-card .form-control { min-width: 120px; }
 
 .chart-card .card-title {
     font-weight: 700;
@@ -391,6 +624,25 @@ function exportChart(chart) {
     a.download = "chart.png";
     a.click();
 }
+
+function openLeaveReasonModal(reason, employeeName, subject) {
+    const modal = document.getElementById('leaveReasonModal');
+    document.getElementById('leaveReasonTitle').textContent = subject || 'Leave Reason';
+    document.getElementById('leaveReasonMeta').textContent = employeeName ? `Employee: ${employeeName}` : '';
+    document.getElementById('leaveReasonBody').textContent = reason || '-';
+    modal.classList.remove('d-none');
+}
+
+function closeLeaveReasonModal() {
+    const modal = document.getElementById('leaveReasonModal');
+    if (modal) modal.classList.add('d-none');
+}
+
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        closeLeaveReasonModal();
+    }
+});
 
 loadAllCharts();
 </script>

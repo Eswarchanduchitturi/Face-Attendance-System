@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL,
     email TEXT UNIQUE,
     department TEXT,
-    role TEXT DEFAULT 'user',
+    role TEXT DEFAULT 'employee',
     created_at TEXT
 )
 """)

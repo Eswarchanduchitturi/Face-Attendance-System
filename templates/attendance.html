@@ -7,10 +7,10 @@
     <div class="attendance-header">
         <div>
             <h1 class="attendance-title">📊 Attendance Dashboard</h1>
-            <p class="attendance-subtitle">Real-time unified attendance records for all users</p>
+            <p class="attendance-subtitle">Real-time unified attendance records, custom salary reports, and multi-format exports</p>
         </div>
         <div class="header-actions">
-            <a href="/download/pdf" id="downloadReportBtn" class="btn-action">📥 Download Detailed Report</a>
+            <a href="/attendance/report/download" id="downloadReportBtn" class="btn-action">📥 Download Report</a>
         </div>
     </div>
 
@@ -46,6 +46,46 @@
         </div>
     </div>
 
+    <!-- CUSTOM REPORT BUILDER -->
+    <div class="report-builder-card">
+        <div class="report-builder-copy">
+            <div class="report-builder-kicker">Custom Export</div>
+            <h3 class="report-builder-title">Build attendance and salary reports for one employee or the whole team</h3>
+            <p class="report-builder-text">Choose an employee, set a date range, and select the file format. The download button above uses these selections instantly.</p>
+        </div>
+        <div class="report-builder-grid">
+            <div class="report-field">
+                <label for="reportEmployeeFilter">Employee</label>
+                <select id="reportEmployeeFilter" class="report-input">
+                    <option value="">All Employees</option>
+                    {% for user in users %}
+                        <option value="{{ user[0] }}">{{ user[1] }} (ID {{ user[0] }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="report-field">
+                <label for="reportStartDate">Start Date</label>
+                <input type="date" id="reportStartDate" class="report-input" value="{{ report_default_start }}">
+            </div>
+            <div class="report-field">
+                <label for="reportEndDate">End Date</label>
+                <input type="date" id="reportEndDate" class="report-input" value="{{ report_default_end }}">
+            </div>
+            <div class="report-field">
+                <label for="reportFormat">Format</label>
+                <select id="reportFormat" class="report-input">
+                    <option value="pdf">PDF</option>
+                    <option value="xlsx">Excel Sheet</option>
+                    <option value="docx">Word Document</option>
+                    <option value="png">Image</option>
+                </select>
+            </div>
+        </div>
+        <div class="report-builder-footer">
+            <span class="report-note">Tip: PDF is best for printing, Excel for editing, Word for sharing, and image for quick preview.</span>
+        </div>
+    </div>
+
     <!-- CHARTS ROW -->
     <div class="charts-grid">
         <div class="chart-card">
@@ -65,8 +105,8 @@
             <div class="filter-controls">
                 <select id="roleFilter" class="filter-input">
                     <option value="">All Roles</option>
-                    <option value="student">Students</option>
-                    <option value="faculty">Faculty</option>
+                    <option value="employee">Employee</option>
+                    <option value="admin">Admin</option>
                 </select>
                 <input type="text" id="searchInput" class="filter-input" placeholder="Search ID or Name...">
                 <input type="date" id="dateFilter" class="filter-input">
@@ -85,22 +125,21 @@
                         <th>Check-In</th>
                         <th>Check-Out</th>
                         <th>Hours</th>
+                        <th>Status</th>
                         <th>Check-In Photo</th>
                         <th>Check-Out Photo</th>
                     </tr>
                 </thead>
                 <tbody id="attendanceTable">
                     {% for row in rows %}
-                    <tr data-role="{{ row[10] }}">
+                    <tr data-role="{{ row[11] }}">
                         <td>{{ row[1] }}</td>
                         <td>{{ row[2] }}</td>
                         <td>
-                            {% if row[10] == 'faculty' %}
-                                <span class="badge faculty-badge">Faculty</span>
-                            {% elif row[10] == 'student' %}
-                                <span class="badge student-badge">Student</span>
+                            {% if row[11] == 'admin' %}
+                                <span class="badge admin-badge">Admin</span>
                             {% else %}
-                                <span class="badge default-badge">User</span>
+                                <span class="badge employee-badge">Employee</span>
                             {% endif %}
                         </td>
                         <td>{{ row[3] }}</td>
@@ -115,15 +154,24 @@
                             {% endif %}
                         </td>
                         <td>
-                            {% if row[8] %}
-                                <img src="{{ url_for('static', filename=row[8]) }}" class="record-image" onclick="openImage(this.src)" alt="Check-In">
+                            {% if row[8] == 'Leave Approved' %}
+                                <span class="badge text-bg-warning">Leave Approved</span>
+                            {% elif row[8] %}
+                                <span class="badge text-bg-success">{{ row[8] }}</span>
+                            {% else %}
+                                <span class="badge text-bg-secondary">Present</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if row[9] %}
+                                <img src="{{ url_for('static', filename=row[9]) }}" class="record-image" onclick="openImage(this.src)" alt="Check-In">
                             {% else %}
                                 <span class="no-image">-</span>
                             {% endif %}
                         </td>
                         <td>
-                            {% if row[9] %}
-                                <img src="{{ url_for('static', filename=row[9]) }}" class="record-image" onclick="openImage(this.src)" alt="Check-Out">
+                            {% if row[10] %}
+                                <img src="{{ url_for('static', filename=row[10]) }}" class="record-image" onclick="openImage(this.src)" alt="Check-Out">
                             {% else %}
                                 <span class="no-image">-</span>
                             {% endif %}
@@ -273,6 +321,99 @@
     border-color: var(--primary);
 }
 
+/* ================= REPORT BUILDER ================= */
+.report-builder-card {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 24px;
+    align-items: start;
+    background: linear-gradient(135deg, #0f1720 0%, #12314d 48%, #0d6efd 100%);
+    color: white;
+    border-radius: 20px;
+    padding: 26px;
+    margin-bottom: 40px;
+    box-shadow: 0 18px 40px rgba(13, 110, 253, 0.18);
+}
+
+.report-builder-kicker {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    color: #e8f2ff;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+}
+
+.report-builder-title {
+    margin: 0 0 10px 0;
+    font-size: 22px;
+    line-height: 1.25;
+}
+
+.report-builder-text {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.84);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.report-builder-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.report-field {
+    display: grid;
+    gap: 8px;
+}
+
+.report-field label {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: rgba(255, 255, 255, 0.78);
+}
+
+.report-input {
+    width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 14px;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.98);
+    color: #0f1720;
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.report-input:focus {
+    border-color: #8bc4ff;
+    box-shadow: 0 0 0 4px rgba(139, 196, 255, 0.22);
+}
+
+.report-builder-footer {
+    grid-column: 1 / -1;
+    margin-top: 2px;
+}
+
+.report-note {
+    display: inline-flex;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.84);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
 .summary-icon {
     font-size: 32px;
     min-width: 50px;
@@ -417,19 +558,14 @@
     font-size: 12px;
 }
 
-.faculty-badge {
-    background: rgba(102, 126, 234, 0.15);
-    color: var(--primary);
-}
-
-.student-badge {
+.employee-badge {
     background: rgba(0, 113, 227, 0.15);
     color: var(--info);
 }
 
-.default-badge {
-    background: rgba(153, 153, 153, 0.15);
-    color: var(--text-light);
+.admin-badge {
+    background: rgba(102, 126, 234, 0.15);
+    color: var(--primary);
 }
 
 .hours-badge {
@@ -558,6 +694,15 @@
         grid-template-columns: repeat(2, 1fr);
     }
 
+    .report-builder-card {
+        grid-template-columns: 1fr;
+        padding: 20px;
+    }
+
+    .report-builder-grid {
+        grid-template-columns: 1fr;
+    }
+
     .charts-grid {
         grid-template-columns: 1fr;
     }
@@ -611,6 +756,23 @@ document.getElementById("dateFilter").addEventListener("change", function() {
     applyFilters();
 });
 
+/* ================= REPORT FILTERS ================= */
+document.getElementById("reportEmployeeFilter").addEventListener("change", function() {
+    updateDownloadLink();
+});
+
+document.getElementById("reportStartDate").addEventListener("change", function() {
+    updateDownloadLink();
+});
+
+document.getElementById("reportEndDate").addEventListener("change", function() {
+    updateDownloadLink();
+});
+
+document.getElementById("reportFormat").addEventListener("change", function() {
+    updateDownloadLink();
+});
+
 /* ================= APPLY ALL FILTERS ================= */
 function applyFilters() {
     const selectedRole = document.getElementById("roleFilter").value.toLowerCase();
@@ -632,14 +794,28 @@ function applyFilters() {
 /* ================= DOWNLOAD FILTER LINK ================= */
 function updateDownloadLink() {
     const downloadBtn = document.getElementById("downloadReportBtn");
-    const rawSearchValue = document.getElementById("searchInput").value.trim();
-    const isNumericUserId = /^\d+$/.test(rawSearchValue);
+    const params = new URLSearchParams();
 
-    if (isNumericUserId) {
-        downloadBtn.href = `/download/pdf?user_id=${encodeURIComponent(rawSearchValue)}`;
-    } else {
-        downloadBtn.href = "/download/pdf";
+    const employeeId = document.getElementById("reportEmployeeFilter").value.trim();
+    const startDate = document.getElementById("reportStartDate").value;
+    const endDate = document.getElementById("reportEndDate").value;
+    const format = document.getElementById("reportFormat").value;
+
+    if (employeeId) {
+        params.set("employee_id", employeeId);
     }
+    if (startDate) {
+        params.set("start_date", startDate);
+    }
+    if (endDate) {
+        params.set("end_date", endDate);
+    }
+    if (format) {
+        params.set("format", format);
+    }
+
+    const queryString = params.toString();
+    downloadBtn.href = queryString ? `/attendance/report/download?${queryString}` : "/attendance/report/download";
 }
 
 /* ================= IMAGE MODAL ================= */
@@ -662,13 +838,15 @@ document.getElementById("imageModal").addEventListener("click", function(e) {
 fetch("/stats/daily")
     .then(r => r.json())
     .then(data => {
+        const trendValues = data.map(d => d[1]);
+        const minTrend = trendValues.length ? Math.min(...trendValues) : -1;
         new Chart(document.getElementById("dailyChart"), {
             type: "line",
             data: {
                 labels: data.map(d => d[0]),
                 datasets: [{
-                    label: "Daily Attendance",
-                    data: data.map(d => d[1]),
+                    label: "Daily Trend (Present +1, Leave -1)",
+                    data: trendValues,
                     borderColor: "#667eea",
                     backgroundColor: "rgba(102, 126, 234, 0.1)",
                     borderWidth: 3,
@@ -691,7 +869,11 @@ fetch("/stats/daily")
                 },
                 scales: {
                     y: {
-                        beginAtZero: true,
+                        beginAtZero: false,
+                        suggestedMin: Math.min(-1, minTrend - 1),
+                        ticks: {
+                            stepSize: 1
+                        },
                         grid: {
                             color: "rgba(0,0,0,0.05)"
                         }

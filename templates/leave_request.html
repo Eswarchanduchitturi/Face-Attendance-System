@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block page_title %}Leave Request{% endblock %}
+{% block content %}
+
+<div class="leave-shell">
+    <section class="frosted-card leave-card mb-3">
+        <h3 class="mb-2">Formal Leave Request</h3>
+        <p class="text-muted mb-3">Submit your leave application in formal format for admin review.</p>
+
+        {% if msg == 'submitted' %}
+            <div class="alert alert-success">Leave request submitted successfully. Admin will review it.</div>
+        {% endif %}
+        {% if error %}
+            <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+
+        <form method="post" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">Employee</label>
+                <select name="emp_id" class="form-select" required>
+                    <option value="">Select Employee</option>
+                    {% for user in users %}
+                        <option value="{{ user[0] }}">{{ user[0] }} - {{ user[1] }} ({{ user[2] }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label">Leave Type</label>
+                <select name="leave_type" class="form-select" required>
+                    <option value="General">General</option>
+                    <option value="Sick Leave">Sick Leave</option>
+                    <option value="Casual Leave">Casual Leave</option>
+                    <option value="Emergency">Emergency</option>
+                </select>
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label">Subject</label>
+                <input type="text" name="subject" class="form-control" maxlength="120" placeholder="Leave request subject" required>
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label">Start Date</label>
+                <input type="date" name="start_date" class="form-control" required>
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label">End Date</label>
+                <input type="date" name="end_date" class="form-control" required>
+            </div>
+
+            <div class="col-md-6">
+                <label class="form-label">Reason (Formal)</label>
+                <textarea name="reason" class="form-control" rows="3" maxlength="1200" placeholder="Respected Sir/Madam, I kindly request leave from ..." required></textarea>
+            </div>
+
+            <div class="col-12">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fa-solid fa-paper-plane me-1"></i> Submit Leave Request
+                </button>
+            </div>
+        </form>
+    </section>
+
+    <section class="frosted-card leave-card">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h4 class="mb-0">Recent Leave Requests</h4>
+            <span class="text-muted small">Latest 50</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table modern-table align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Employee</th>
+                        <th>Subject</th>
+                        <th>Type</th>
+                        <th>From</th>
+                        <th>To</th>
+                        <th>Days</th>
+                        <th>Status</th>
+                        <th>Applied At</th>
+                        <th>Reviewed At</th>
+                        <th>Admin Comment</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in requests %}
+                        <tr>
+                            <td>#{{ row[0] }}</td>
+                            <td>{{ row[1] }} - {{ row[2] }}</td>
+                            <td>{{ row[3] }}</td>
+                            <td>{{ row[4] }}</td>
+                            <td>{{ row[5] }}</td>
+                            <td>{{ row[6] }}</td>
+                            <td>{{ row[7] }}</td>
+                            <td>
+                                {% if row[8] == 'Approved' %}
+                                    <span class="badge text-bg-success">Approved</span>
+                                {% elif row[8] == 'Denied' %}
+                                    <span class="badge text-bg-danger">Denied</span>
+                                {% else %}
+                                    <span class="badge text-bg-warning">Pending</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ row[9] or '-' }}</td>
+                            <td>{{ row[10] or '-' }}</td>
+                            <td>{{ row[11] or '-' }}</td>
+                        </tr>
+                    {% else %}
+                        <tr>
+                            <td colspan="11" class="text-center text-muted">No leave requests yet.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+
+<style>
+.leave-shell { display: grid; gap: 14px; }
+.leave-card h3, .leave-card h4 { font-family: "Sora", sans-serif; }
+</style>
+
+{% endblock %}

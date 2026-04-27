@@ -1,0 +1,515 @@
+{% extends "base.html" %}
+{% block page_title %}Payroll Management{% endblock %}
+{% block content %}
+
+<div class="payroll-shell">
+    <section class="payroll-hero">
+        <div>
+            <p class="label">Real-time Payroll</p>
+            <h1>Automatic Salary Processing</h1>
+            <p>Payroll is calculated directly from attendance data, employee salary settings, and overtime for {{ month_label }}.</p>
+        </div>
+        <div class="hero-actions">
+            <form method="get" action="/payroll" class="month-form">
+                <input type="month" name="month" value="{{ month_key }}" class="form-control" aria-label="Select payroll month">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fa-solid fa-rotate me-1"></i> Load Month
+                </button>
+            </form>
+            <a href="/payroll/export/pdf?month={{ month_key }}" class="btn btn-outline-secondary">
+                <i class="fa-solid fa-file-pdf me-1"></i> Export PDF
+            </a>
+        </div>
+    </section>
+
+    {% if msg == 'settings_saved' %}
+        <div class="alert alert-success">Payroll settings saved. Monthly payroll was recalculated automatically.</div>
+    {% endif %}
+
+    <section class="metrics-grid">
+        <article class="metric-card">
+            <span>Total Net Payroll</span>
+            <strong id="metricNetPayroll">{{ "%.2f"|format(totals.net_salary) }}</strong>
+        </article>
+        <article class="metric-card">
+            <span>Total Gross Salary</span>
+            <strong id="metricGrossSalary">{{ "%.2f"|format(totals.gross_salary) }}</strong>
+        </article>
+        <article class="metric-card">
+            <span>Total Overtime Pay</span>
+            <strong id="metricOvertimePay">{{ "%.2f"|format(totals.overtime_pay) }}</strong>
+        </article>
+        <article class="metric-card">
+            <span>Absence Days</span>
+            <strong id="metricAbsenceDays">{{ totals.absent_days }}</strong>
+        </article>
+    </section>
+
+    <section class="frosted-card mb-3">
+        <div class="section-head">
+            <div>
+                <div class="card-title mb-1">Payroll Formula</div>
+                <p class="section-note mb-0">Default salary is calculated from attendance workdays, working hours, overtime, and missed days.</p>
+            </div>
+            <span class="badge text-bg-secondary">Simple mode</span>
+        </div>
+        <div class="formula-grid">
+            <div class="formula-box">
+                <span>Base Salary</span>
+                <strong>Paid Days (>=7 hrs) + Hourly for partial days</strong>
+            </div>
+            <div class="formula-box">
+                <span>Overtime</span>
+                <strong>Extra Hours x Hourly Rate x Multiplier</strong>
+            </div>
+            <div class="formula-box">
+                <span>Net Salary</span>
+                <strong>Base + Overtime + Bonus</strong>
+            </div>
+        </div>
+    </section>
+
+    <section class="frosted-card mb-3">
+        <div class="section-head">
+            <div>
+                <div class="card-title mb-1">Monthly Payroll Summary</div>
+                <p class="section-note mb-0">Automatic calculation based on the selected month and the current attendance ledger.</p>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <span id="payrollAutoStatus" class="text-muted small">Auto refresh every 15s</span>
+                <span class="badge text-bg-dark">{{ month_label }}</span>
+            </div>
+        </div>
+
+        <div class="payroll-table-tools mb-2">
+            <input id="payrollSearch" type="text" class="form-control" placeholder="Search employee name or ID...">
+            <select id="payrollRoleFilter" class="form-select" aria-label="Filter by role">
+                <option value="">All roles</option>
+                <option value="admin">Admin</option>
+                <option value="employee">Employee</option>
+            </select>
+            <select id="payrollSort" class="form-select" aria-label="Sort payroll table">
+                <option value="net_salary:desc">Sort: Net Salary (High to Low)</option>
+                <option value="net_salary:asc">Sort: Net Salary (Low to High)</option>
+                <option value="name:asc">Sort: Name (A-Z)</option>
+                <option value="paid_days:desc">Sort: Paid Days (High to Low)</option>
+                <option value="total_hours:desc">Sort: Total Hours (High to Low)</option>
+            </select>
+            <div class="tools-meta text-muted small" id="payrollRowCount">Showing {{ payroll_rows|length }} employees</div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table modern-table align-middle mb-0 payroll-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Employee</th>
+                        <th>Role</th>
+                        <th>Present</th>
+                        <th>Absent</th>
+                        <th>Hours</th>
+                        <th>OT Hours</th>
+                        <th>Configured Base</th>
+                        <th>Earned Base</th>
+                        <th>Overtime</th>
+                        <th>Bonus</th>
+                        <th>Net Salary</th>
+                    </tr>
+                </thead>
+                <tbody id="payrollTableBody">
+                {% for row in payroll_rows %}
+                    <tr>
+                        <td><strong>#{{ row.user_id }}</strong></td>
+                        <td>{{ row.name }}</td>
+                        <td>
+                            {% if row.role == 'admin' %}
+                                <span class="badge text-bg-primary">Admin</span>
+                            {% else %}
+                                <span class="badge text-bg-success">Employee</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ row.present_days }}</td>
+                        <td>{{ row.absent_days }}</td>
+                        <td>{{ "%.2f"|format(row.total_hours) }}</td>
+                        <td>{{ "%.2f"|format(row.overtime_hours) }}</td>
+                        <td>{{ "%.2f"|format(row.configured_base_salary) }}</td>
+                        <td>{{ "%.2f"|format(row.base_salary) }}</td>
+                        <td>{{ "%.2f"|format(row.overtime_pay) }}</td>
+                        <td>{{ "%.2f"|format(row.bonuses) }}</td>
+                        <td><strong>{{ "%.2f"|format(row.net_salary) }}</strong></td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="12" class="text-center text-muted py-4">No payroll records found for this month.</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+
+<style>
+.payroll-shell { display: grid; gap: 14px; }
+.payroll-hero {
+    background:
+        radial-gradient(circle at 85% 18%, rgba(255, 255, 255, 0.22), transparent 36%),
+        linear-gradient(132deg, #0d131c 0%, #174a77 52%, #2a7fc0 100%);
+    color: #eef6ff;
+    border-radius: 22px;
+    padding: 24px;
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 20px 40px rgba(7, 23, 44, 0.24);
+}
+.payroll-hero .label {
+    margin: 0 0 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    font-size: 12px;
+    color: #b7d0ea;
+}
+.payroll-hero h1 {
+    margin: 0;
+    font-family: "Sora", sans-serif;
+    font-size: 31px;
+    letter-spacing: 0.2px;
+}
+.payroll-hero p { margin: 8px 0 0; color: #d8e8f8; max-width: 760px; }
+.hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    justify-content: flex-end;
+}
+.month-form {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+.month-form .form-control {
+    min-width: 170px;
+    background: rgba(255, 255, 255, 0.92) !important;
+    border: 1px solid rgba(255, 255, 255, 0.5) !important;
+}
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(180px, 1fr));
+    gap: 12px;
+}
+.metric-card {
+    background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
+    border: 1px solid #d4e0eb;
+    border-radius: 18px;
+    padding: 16px 18px;
+    box-shadow: 0 12px 28px rgba(15,23,32,.07);
+    transition: transform .18s ease, box-shadow .2s ease;
+}
+
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 16px 32px rgba(15,23,32,.11);
+}
+.metric-card span {
+    display: block;
+    font-size: 12px;
+    color: #647887;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+}
+.metric-card strong {
+    font-family: "Sora", sans-serif;
+    font-size: 26px;
+    margin-top: 6px;
+    display: block;
+}
+.section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.card-title {
+    font-weight: 700;
+    font-size: 14px;
+}
+.section-note {
+    color: #607483;
+    font-size: 13px;
+}
+.formula-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+.formula-box {
+    background: linear-gradient(180deg, #f8fbfd 0%, #f2f7fb 100%);
+    border: 1px solid #d9e0e6;
+    border-radius: 15px;
+    padding: 14px;
+}
+.formula-box span {
+    display: block;
+    font-size: 12px;
+    color: #647887;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    margin-bottom: 6px;
+}
+.formula-box strong {
+    display: block;
+    font-size: 14px;
+    color: #17324a;
+}
+
+.payroll-table-tools {
+    display: grid;
+    grid-template-columns: 1.3fr 0.8fr 1fr auto;
+    gap: 10px;
+    align-items: center;
+    background: linear-gradient(180deg, #f8fbff 0%, #f3f8fc 100%);
+    border: 1px solid #dbe6f1;
+    border-radius: 14px;
+    padding: 10px;
+}
+
+.payroll-table-tools .form-control,
+.payroll-table-tools .form-select {
+    min-height: 42px;
+    border-radius: 10px;
+}
+
+.payroll-table {
+    table-layout: auto;
+    border-radius: 14px;
+    overflow: hidden;
+}
+
+.payroll-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: linear-gradient(180deg, #eaf2fb 0%, #e4eef9 100%);
+    white-space: nowrap;
+    border-bottom: 1px solid #d2e0ee;
+}
+
+.payroll-table td {
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.payroll-table td:nth-child(2) {
+    white-space: normal;
+    min-width: 160px;
+}
+
+.payroll-table tbody tr {
+    transition: background-color .14s ease;
+}
+
+.payroll-table tbody tr:hover {
+    background: #f3f8ff;
+}
+
+.tools-meta {
+    text-align: right;
+    min-width: 140px;
+}
+
+@media (max-width: 1100px) {
+    .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+    .payroll-hero { flex-direction: column; }
+    .hero-actions { justify-content: flex-start; }
+    .formula-grid { grid-template-columns: 1fr; }
+    .payroll-table-tools { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 720px) {
+    .metrics-grid { grid-template-columns: 1fr; }
+    .month-form { width: 100%; flex-direction: column; align-items: stretch; }
+    .month-form .form-control { min-width: 0; width: 100%; }
+    .payroll-table-tools { grid-template-columns: 1fr; }
+    .tools-meta { text-align: left; }
+}
+</style>
+
+<script>
+let latestPayrollRows = [];
+
+function formatCurrency(value) {
+    const num = Number(value || 0);
+    return new Intl.NumberFormat('en-IN', {
+        style: 'currency',
+        currency: 'INR',
+        maximumFractionDigits: 2
+    }).format(num);
+}
+
+function money(value) {
+    const num = Number(value || 0);
+    return num.toFixed(2);
+}
+
+function getFilteredAndSortedRows(rows) {
+    const searchNode = document.getElementById('payrollSearch');
+    const roleNode = document.getElementById('payrollRoleFilter');
+    const sortNode = document.getElementById('payrollSort');
+
+    const searchTerm = (searchNode?.value || '').trim().toLowerCase();
+    const roleFilter = (roleNode?.value || '').trim().toLowerCase();
+    const [sortKey, sortDir] = (sortNode?.value || 'net_salary:desc').split(':');
+
+    let filtered = rows.filter((row) => {
+        const roleOk = !roleFilter || String(row.role || '').toLowerCase() === roleFilter;
+        if (!roleOk) return false;
+
+        if (!searchTerm) return true;
+        const name = String(row.name || '').toLowerCase();
+        const idText = String(row.user_id || '').toLowerCase();
+        return name.includes(searchTerm) || idText.includes(searchTerm);
+    });
+
+    filtered.sort((a, b) => {
+        const av = a?.[sortKey];
+        const bv = b?.[sortKey];
+        const isNumeric = typeof av === 'number' || typeof bv === 'number' || !isNaN(Number(av)) || !isNaN(Number(bv));
+
+        let cmp = 0;
+        if (isNumeric) {
+            cmp = Number(av || 0) - Number(bv || 0);
+        } else {
+            cmp = String(av || '').localeCompare(String(bv || ''));
+        }
+
+        return sortDir === 'asc' ? cmp : -cmp;
+    });
+
+    return filtered;
+}
+
+function renderPayrollRows(rows) {
+    const tbody = document.getElementById('payrollTableBody');
+    const rowCount = document.getElementById('payrollRowCount');
+    if (!tbody) return;
+
+    if (!rows || rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-4">No payroll records found for this month.</td></tr>';
+        if (rowCount) rowCount.textContent = 'Showing 0 employees';
+        return;
+    }
+
+    const viewRows = getFilteredAndSortedRows(rows);
+
+    const html = viewRows.map((row) => {
+        const roleBadge = (row.role === 'admin')
+            ? '<span class="badge text-bg-primary">Admin</span>'
+            : '<span class="badge text-bg-success">Employee</span>';
+
+        return `
+            <tr>
+                <td><strong>#${row.user_id}</strong></td>
+                <td>${row.name || '-'}</td>
+                <td>${roleBadge}</td>
+                <td>${row.present_days ?? 0}</td>
+                <td>${row.absent_days ?? 0}</td>
+                <td>${money(row.total_hours)}</td>
+                <td>${money(row.overtime_hours)}</td>
+                <td>${formatCurrency(row.configured_base_salary)}</td>
+                <td>${formatCurrency(row.base_salary)}</td>
+                <td>${formatCurrency(row.overtime_pay)}</td>
+                <td>${formatCurrency(row.bonuses)}</td>
+                <td><strong>${formatCurrency(row.net_salary)}</strong></td>
+            </tr>
+        `;
+    }).join('');
+
+    tbody.innerHTML = html;
+    if (rowCount) rowCount.textContent = `Showing ${viewRows.length} of ${rows.length} employees`;
+}
+
+function updateMetrics(totals, rows) {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const grossFromConfiguredBase = safeRows.reduce((sum, row) => sum + Number(row?.configured_base_salary || 0), 0);
+    const netFromRows = safeRows.reduce((sum, row) => sum + Number(row?.net_salary || 0), 0);
+    const overtimeFromRows = safeRows.reduce((sum, row) => sum + Number(row?.overtime_pay || 0), 0);
+    const absentFromRows = safeRows.reduce((sum, row) => sum + Number(row?.absent_days || 0), 0);
+
+    // Business rule: gross salary card should reflect total configured base.
+    const grossValue = grossFromConfiguredBase;
+    const netValue = Number(totals?.net_salary ?? 0) > 0 ? totals.net_salary : netFromRows;
+    const overtimeValue = Number(totals?.overtime_pay ?? 0) > 0 ? totals.overtime_pay : overtimeFromRows;
+    const absentValue = Number(totals?.absent_days ?? 0) > 0 ? totals.absent_days : absentFromRows;
+
+    document.getElementById('metricNetPayroll').textContent = money(totals.net_salary);
+    document.getElementById('metricNetPayroll').textContent = money(netValue);
+    document.getElementById('metricGrossSalary').textContent = money(grossValue);
+    document.getElementById('metricOvertimePay').textContent = money(overtimeValue);
+    document.getElementById('metricAbsenceDays').textContent = String(absentValue);
+}
+
+async function refreshPayrollSummary() {
+    const monthInput = document.querySelector('input[name="month"]');
+    const month = monthInput ? monthInput.value : '{{ month_key }}';
+    const statusNode = document.getElementById('payrollAutoStatus');
+
+    try {
+        const res = await fetch(`/api/payroll/summary?month=${encodeURIComponent(month)}&_=${Date.now()}`, {
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: {
+                'Accept': 'application/json'
+            }
+        });
+
+        if (res.status === 401 || res.status === 403) {
+            window.location.href = '/login';
+            return;
+        }
+
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.toLowerCase().includes('application/json')) {
+            throw new Error('Payroll summary API did not return JSON');
+        }
+
+        const data = await res.json();
+        if (data.status !== 'ok') return;
+
+        latestPayrollRows = data.rows || [];
+        updateMetrics(data.totals || {}, latestPayrollRows);
+        renderPayrollRows(latestPayrollRows);
+
+        if (statusNode) {
+            const now = new Date();
+            statusNode.textContent = `Updated ${now.toLocaleTimeString()}`;
+        }
+    } catch (e) {
+        console.error('Payroll auto-refresh failed:', e);
+        if (statusNode) {
+            statusNode.textContent = 'Auto refresh failed. Retrying...';
+        }
+    }
+}
+
+refreshPayrollSummary();
+setInterval(refreshPayrollSummary, 15000);
+
+const monthPicker = document.querySelector('input[name="month"]');
+if (monthPicker) {
+    monthPicker.addEventListener('change', refreshPayrollSummary);
+}
+
+const searchInput = document.getElementById('payrollSearch');
+const roleFilter = document.getElementById('payrollRoleFilter');
+const sortSelect = document.getElementById('payrollSort');
+
+if (searchInput) searchInput.addEventListener('input', () => renderPayrollRows(latestPayrollRows));
+if (roleFilter) roleFilter.addEventListener('change', () => renderPayrollRows(latestPayrollRows));
+if (sortSelect) sortSelect.addEventListener('change', () => renderPayrollRows(latestPayrollRows));
+</script>
+
+{% endblock %}

@@ -43,8 +43,7 @@
                         </td>
                         <td>
                             <select name="role" class="form-select" form="edit-form-{{ user[0] }}">
-                                <option value="student" {% if user[2]=='student' %}selected{% endif %}>Student</option>
-                                <option value="faculty" {% if user[2]=='faculty' %}selected{% endif %}>Faculty</option>
+                                <option value="employee" {% if user[2]=='employee' %}selected{% endif %}>Employee</option>
                                 <option value="admin" {% if user[2]=='admin' %}selected{% endif %}>Admin</option>
                             </select>
                         </td>

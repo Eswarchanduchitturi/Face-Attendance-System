@@ -8,6 +8,8 @@ import sys
 import sqlite3
 import datetime
 
+from face_utils import predict_face_with_flip, verify_prediction_with_gallery, CONFIDENCE_THRESHOLD
+
 # ------------------ Mode Selection ------------------
 if len(sys.argv) < 2:
     print("Usage: python attendance.py [checkin/checkout]")
@@ -124,10 +126,14 @@ while True:
     for (x, y, w, h) in faces:
         cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 255), 2)
 
-        Id, conf = recognizer.predict(gray[y:y+h, x:x+w])
-        confidence = int(100 - conf)
+        face_roi = gray[y:y+h, x:x+w]
+        Id, conf, prediction_debug = predict_face_with_flip(recognizer, face_roi)
+        if Id is None or conf is None:
+            continue
 
-        if confidence > 50:
+        gallery_ok, _ = verify_prediction_with_gallery(face_roi, Id)
+
+        if conf <= CONFIDENCE_THRESHOLD and prediction_debug.get("agreement", False) and gallery_ok:
             name = df.loc[df['Id'] == Id]['Name'].values
             name = str(name)[2:-2]
 

@@ -31,7 +31,7 @@
                         </td>
                         <td>
                             {% if c[3] == 'Open' %}
-                            <a href="/admin/complaint/close/{{ c[0] }}" class="btn btn-sm btn-danger">
+                            <a href="{{ url_for('close_complaint', cid=c[0]) }}" class="btn btn-sm btn-danger">
                                 Close
                             </a>
                             {% else %}
